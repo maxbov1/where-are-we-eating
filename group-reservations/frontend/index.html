@@ -12,28 +12,28 @@
       <main>
         <section class="screen active" id="signup-screen" aria-labelledby="signup-title">
           <div class="hero-copy">
-            <p class="eyebrow">Dinner is better when everyone gets a say</p>
+            <p class="eyebrow">Dinner is better with the whole crew</p>
             <h1 id="signup-title">Skip the planning.<br /><em>Keep the memories.</em></h1>
-            <p class="lede">Bring the group together around one easy question, then let us find a table everyone can look forward to.</p>
+            <p class="lede">Get the crew on the same page, then let us find a table everyone can get excited about.</p>
           </div>
           <form class="card auth-card" id="signup-form">
             <div class="card-kicker">Your next gathering</div>
-            <h2>Make room for everyone.</h2>
+            <h2>Get the crew together.</h2>
             <label>Email address <input required type="email" id="organizer-email" placeholder="you@example.com" /></label>
-            <button class="button primary" type="submit">Create my first event <span>→</span></button>
+            <button class="button primary" type="submit">Start an event <span>→</span></button>
             <p class="fine-print">No guest accounts. No group-chat archaeology.</p>
           </form>
         </section>
 
         <section class="screen" id="organizer-screen" aria-labelledby="organizer-title">
           <div class="page-heading">
-            <div><p class="eyebrow">Organizer workspace</p><h1 id="organizer-title">Bring the group together.</h1></div>
+            <div><p class="eyebrow">For the group chat</p><h1 id="organizer-title">Get everyone on the same page.</h1></div>
             <button class="text-button" id="reset-app">Start over</button>
           </div>
           <div class="build-page">
             <form class="card event-form" id="event-form">
-              <div class="card-kicker">Shape the invitation</div>
-              <h2>Where should we gather?</h2>
+              <div class="card-kicker">Set the vibe</div>
+              <h2>Where at?</h2>
               <label>Event name <input required id="event-name" value="Friday dinner" /></label>
               <label>City or neighborhood <input required id="event-location" value="San Francisco" /></label>
               <div class="field-label">Pick up to 3 dates</div>
@@ -45,9 +45,19 @@
                 <label class="time-row"><input required class="time-input" type="time" value="20:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>
               </div>
               <button class="add-time" id="add-time" type="button">+ Add another time</button>
-              <div class="field-label">What should the group weigh in on?</div>
-              <div class="chip-grid compact" id="question-topics"><label class="choice selected"><input checked type="checkbox" value="cuisine" /> Cuisine</label><label class="choice selected"><input checked type="checkbox" value="price" /> Budget</label><label class="choice selected"><input checked type="checkbox" value="vibe" /> Vibe</label><label class="choice selected"><input checked type="checkbox" value="distance" /> Distance</label><label class="choice"><input type="checkbox" value="dietary" /> Dietary needs</label></div>
-              <div class="question-options" id="question-options" aria-live="polite"></div>
+              <div class="field-label">What should everyone weigh in on?</div>
+              <div class="topic-list" id="question-topics" aria-label="Survey topics"></div>
+              <div class="question-drawer hidden" id="question-drawer" role="dialog" aria-modal="true" aria-labelledby="question-drawer-title">
+                <div class="question-drawer-backdrop" data-close-question></div>
+                <div class="question-drawer-panel">
+                  <button class="modal-close" type="button" data-close-question aria-label="Close question editor">×</button>
+                  <div class="card-kicker">What guests see</div>
+                  <h3 id="question-drawer-title">Edit question</h3>
+                  <p class="drawer-intro">Turn choices on or off. Guests only see the ones you leave active.</p>
+                  <div class="question-options" id="question-options" aria-live="polite"></div>
+                  <button class="button primary full" type="button" data-close-question>Done</button>
+                </div>
+              </div>
               <button class="button primary" type="submit">Generate share link <span>→</span></button>
             </form>
           </div>
@@ -84,8 +94,8 @@
             <div class="survey-progress"><span></span></div>
             <div class="survey-intro"><p class="eyebrow">A little help from the whole table</p><h1 id="survey-title">Help pick <em>Friday dinner.</em></h1><p id="survey-location">San Francisco · about 30 seconds · no sign-up</p></div>
             <form class="survey-form" id="survey-form">
-              <fieldset><legend>Which dates work for you?</legend><p class="question-help">Pick all that work.</p><div class="survey-choices" id="survey-dates"></div></fieldset>
-              <fieldset><legend>Which times could work?</legend><p class="question-help">Pick all that work across the dates.</p><div class="survey-choices" id="survey-times"></div></fieldset>
+              <fieldset><legend>When works?</legend><p class="question-help">Pick every day that works.</p><div class="survey-choices" id="survey-dates"></div></fieldset>
+              <fieldset><legend>What time works?</legend><p class="question-help">Pick every time you could make it.</p><div class="survey-choices" id="survey-times"></div></fieldset>
               <div id="survey-question-fields"></div>
               <button class="button primary full" type="submit">Send my picks <span>→</span></button>
             </form>
