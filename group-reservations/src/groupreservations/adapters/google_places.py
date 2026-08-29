@@ -16,6 +16,7 @@ _SEARCH_FIELD_MASK = (
 _DETAILS_FIELD_MASK = (
     "id,displayName,formattedAddress,googleMapsUri,editorialSummary,"
     "websiteUri,rating,priceLevel,businessStatus,regularOpeningHours"
+    ",reservable"
 )
 
 
@@ -66,6 +67,7 @@ def get_place(api_key: str, place_id: str) -> tuple[Place, dict]:
         website_uri=data.get("websiteUri"),
         rating=data.get("rating"),
         price_level=data.get("priceLevel"),
+        reservable=data.get("reservable"),
     )
     return place, {
         "business_status": data.get("businessStatus"),

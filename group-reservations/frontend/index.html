@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Where Are We Eating?</title>
+    <meta name="description" content="Turn group-chat chaos into one dinner plan." />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <main>
+        <section class="screen active" id="signup-screen" aria-labelledby="signup-title">
+          <div class="hero-copy">
+            <p class="eyebrow">Dinner is better when everyone gets a say</p>
+            <h1 id="signup-title">Skip the planning.<br /><em>Keep the memories.</em></h1>
+            <p class="lede">Bring the group together around one easy question, then let us find a table everyone can look forward to.</p>
+          </div>
+          <form class="card auth-card" id="signup-form">
+            <div class="card-kicker">Your next gathering</div>
+            <h2>Make room for everyone.</h2>
+            <label>Email address <input required type="email" id="organizer-email" placeholder="you@example.com" /></label>
+            <button class="button primary" type="submit">Create my first event <span>→</span></button>
+            <p class="fine-print">No guest accounts. No group-chat archaeology.</p>
+          </form>
+        </section>
+
+        <section class="screen" id="organizer-screen" aria-labelledby="organizer-title">
+          <div class="page-heading">
+            <div><p class="eyebrow">Organizer workspace</p><h1 id="organizer-title">Bring the group together.</h1></div>
+            <button class="text-button" id="reset-app">Start over</button>
+          </div>
+          <div class="build-page">
+            <form class="card event-form" id="event-form">
+              <div class="card-kicker">Shape the invitation</div>
+              <h2>Where should we gather?</h2>
+              <label>Event name <input required id="event-name" value="Friday dinner" /></label>
+              <label>City or neighborhood <input required id="event-location" value="San Francisco" /></label>
+              <div class="field-label">Pick up to 3 dates</div>
+              <div class="date-grid"><input required type="date" id="date-1" /><input type="date" id="date-2" /><input type="date" id="date-3" /></div>
+              <div class="field-label">Offer up to 3 time slots on each date</div>
+              <div class="time-editor" id="time-options">
+                <label class="time-row"><input required class="time-input" type="time" value="18:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>
+                <label class="time-row"><input required class="time-input" type="time" value="19:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>
+                <label class="time-row"><input required class="time-input" type="time" value="20:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>
+              </div>
+              <button class="add-time" id="add-time" type="button">+ Add another time</button>
+              <div class="field-label">What should the group weigh in on?</div>
+              <div class="chip-grid compact" id="question-topics"><label class="choice selected"><input checked type="checkbox" value="cuisine" /> Cuisine</label><label class="choice selected"><input checked type="checkbox" value="price" /> Budget</label><label class="choice selected"><input checked type="checkbox" value="vibe" /> Vibe</label><label class="choice selected"><input checked type="checkbox" value="distance" /> Distance</label><label class="choice"><input type="checkbox" value="dietary" /> Dietary needs</label></div>
+              <div class="question-options" id="question-options" aria-live="polite"></div>
+              <button class="button primary" type="submit">Generate share link <span>→</span></button>
+            </form>
+          </div>
+          <div class="modal hidden" id="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title">
+            <div class="modal-backdrop" data-close-modal></div>
+            <div class="modal-card">
+              <button class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
+              <div class="card-kicker">Your invitation is ready</div>
+              <h2 id="share-title">Now bring everyone in.</h2>
+              <p class="modal-intro">Drop this into the group chat. Everyone can choose what works without making an account.</p>
+              <div class="share-tools">
+                <div class="qr-chip"><img id="qr-code" alt="QR code for the group survey" /><span>Scan to vote</span></div>
+                <div class="share-fields">
+                  <label>Survey link <input id="survey-link" readonly /></label>
+                  <button class="button secondary" id="copy-link" type="button">Copy link</button>
+                  <label>Group message <textarea id="share-message" readonly></textarea></label>
+                  <button class="button primary" id="copy-message" type="button">Copy message <span>→</span></button>
+                  <p class="copied hidden" id="copied-note">Copied — ready for the group chat.</p>
+                </div>
+              </div>
+              <button class="button ghost full" id="open-survey" type="button">Preview the survey</button>
+            </div>
+          </div>
+          <section class="card results-card hidden" id="results-card">
+            <div class="results-heading"><div><div class="card-kicker">Let the group decide</div><h2 id="results-title">Responses will land here.</h2></div><button class="button primary" id="run-agent" type="button">Find our top 3 <span>✦</span></button></div>
+            <div id="response-summary" class="response-summary"></div>
+            <div id="recommendations" class="recommendations"></div>
+          </section>
+        </section>
+
+        <section class="screen" id="survey-screen" aria-labelledby="survey-title">
+          <div class="survey-wrap">
+            <div class="survey-brand">✳ where are we eating?</div>
+            <div class="survey-progress"><span></span></div>
+            <div class="survey-intro"><p class="eyebrow">A little help from the whole table</p><h1 id="survey-title">Help pick <em>Friday dinner.</em></h1><p id="survey-location">San Francisco · about 30 seconds · no sign-up</p></div>
+            <form class="survey-form" id="survey-form">
+              <fieldset><legend>Which dates work for you?</legend><p class="question-help">Pick all that work.</p><div class="survey-choices" id="survey-dates"></div></fieldset>
+              <fieldset><legend>Which times could work?</legend><p class="question-help">Pick all that work across the dates.</p><div class="survey-choices" id="survey-times"></div></fieldset>
+              <div id="survey-question-fields"></div>
+              <button class="button primary full" type="submit">Send my picks <span>→</span></button>
+            </form>
+            <div class="survey-thanks hidden" id="survey-thanks"><div class="thanks-mark">✓</div><p class="eyebrow">You're in</p><h1>Thanks for weighing in.</h1><p>The organizer will get the group’s best options soon.</p><button class="button ghost" id="back-organizer" type="button">Back to organizer view</button></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -16,6 +16,7 @@ class Place:
     menu_uri: str | None = None
     rating: float | None = None
     price_level: str | None = None
+    reservable: bool | None = None
     timezone: str | None = None
     directions_uri: str | None = None
 

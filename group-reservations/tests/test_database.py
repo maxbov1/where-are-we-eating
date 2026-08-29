@@ -1,0 +1,41 @@
+from concurrent.futures import ThreadPoolExecutor
+
+from groupreservations import database
+
+
+def test_concurrent_guest_submissions_are_independent(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("organizer@example.com", "cognito-sub-1")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Francisco", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian", "Japanese"]},
+    )
+
+    def submit(index):
+        return database.append_response(
+            survey["public_token"], f"guest-token-{index}",
+            ["2026-09-04"], ["19:00"], {"cuisine": ["Italian" if index % 2 else "Japanese"]},
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(submit, range(3)))
+
+    stored = database.aggregate_survey(survey["id"])
+    assert len({response["respondent_user_id"] for response in responses}) == 3
+    assert stored["response_count"] == 3
+    assert stored["preference_summary"]["cuisine"] == {"Japanese": 2, "Italian": 1}
+
+
+def test_same_guest_updates_one_response(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("organizer@example.com", "cognito-sub-2")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Francisco", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian", "Japanese"]},
+    )
+    first = database.append_response(survey["public_token"], "same-guest-token", ["2026-09-04"], ["19:00"], {"cuisine": ["Italian"]})
+    second = database.append_response(survey["public_token"], "same-guest-token", ["2026-09-04"], ["19:00"], {"cuisine": ["Japanese"]})
+    stored = database.aggregate_survey(survey["id"])
+    assert first["respondent_user_id"] == second["respondent_user_id"]
+    assert stored["response_count"] == 1
+    assert stored["preference_summary"]["cuisine"] == {"Japanese": 1}
