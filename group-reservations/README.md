@@ -108,11 +108,16 @@ PYTHONPATH=src python -m groupreservations.opentable_mcp --list-tools
 PYTHONPATH=src python -m groupreservations.opentable_mcp \
   "Find three Italian restaurants for 4 people in San Francisco this Friday at 7 PM"
 
-# Start the API used by the frontend in a second terminal.
-PYTHONPATH=src uvicorn groupreservations.api:app --reload --port 8000
+# Start the API (http://127.0.0.1:8000) and the frontend
+# (http://127.0.0.1:4173) together. Ctrl+C stops both.
+python scripts/dev.py
 
-# Serve the frontend in a third terminal.
-python -m http.server 4173 --directory frontend
+# Override ports or disable autoreload if needed.
+python scripts/dev.py --api-port 8001 --frontend-port 5173 --no-reload
+
+# Or run them by hand in two terminals instead:
+#   PYTHONPATH=src uvicorn groupreservations.api:app --reload --port 8000
+#   python -m http.server 4173 --directory frontend
 
 # Seed four repeatable guest responses for the recommendation flow.
 PYTHONPATH=src python scripts/seed_fixture.py
@@ -142,6 +147,12 @@ cleaned vote summary:
 PYTHONPATH=src python scripts/seed_fixture.py
 curl http://127.0.0.1:8000/api/surveys/<survey_id>/aggregate
 ```
+
+The aggregate response and its `report` carry a deterministic `confidence`
+block: a per-dimension score, an overall `high`/`medium`/`low`/`none` band, the
+weakest dimension, and plain-language notes (low response count, split votes,
+unanswered questions). It is computed in `scoring.py` from the vote tallies
+alone, before any agent call, and the agent is instructed to honor it.
 
 To run the real Bedrock-backed recommendation path against those responses:
 
