@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,8 @@ OPENTABLE_PACKAGE = "@striderlabs/mcp-opentable"
 OPENTABLE_TOOLS = [
     "opentable_status",
     "opentable_login",
+    "opentable_search",
+    "opentable_get_restaurant",
     "opentable_check_availability",
     "opentable_make_reservation",
 ]
@@ -48,10 +51,12 @@ opening-hour evidence. Use google_places_details only to refresh one
 restaurant. Google Places is the source of truth for candidate discovery and
 place identity.
 
-After Google discovery, use OpenTable only to check availability for the
-selected Google Place or to complete an explicit booking request. Availability
-does not require an OpenTable login. Never ask the organizer to log in merely
-to discover restaurants or check availability. For booking, verify the
+After Google discovery, use OpenTable search/get_restaurant to resolve the
+matching OpenTable record before checking availability. Pass the returned
+OpenTable restaurant ID or profile URL to the availability tool; do not invent
+an ID or URL from the restaurant name. Availability does not require an
+OpenTable login. Never ask the organizer to log in merely to discover
+restaurants or check availability. For booking, verify the
 organizer's intent, call opentable_status, and if needed call opentable_login.
 Never make a booking unless the organizer clearly confirmed the exact
 restaurant, date, time, and party size. Never claim a reservation was made
@@ -67,8 +72,16 @@ restaurant candidates. If reservation evidence is missing or a tool fails,
 include that uncertainty in your answer.
 
 Return concise, structured results with restaurant name, address, matching
-time/date, availability evidence, source link when available, and a short
-reason the group may prefer it.
+time/date, availability evidence, and a short reason the group may prefer it.
+For every candidate, preserve and print exact URLs as separate links: Google
+Maps, restaurant website, and booking link. Prefer the explicit booking_uri
+and booking_provider from the hydrated restaurant struct. This may be the
+restaurant's own booking page, OpenTable, Resy, Tock, or another provider.
+OpenTable is only a fallback when its tool returns a verified listing or live
+reservation URL. Never invent a provider URL from a restaurant name or claim
+that a listing link proves a slot is available. If no booking link is known,
+say "Booking link unavailable". A booking link is a user handoff; live
+date/time availability remains a separate provider result.
 """
 
 
@@ -79,6 +92,16 @@ def _user_home(user_id: str) -> Path:
     home = (root / user_id / "home").resolve()
     home.mkdir(parents=True, exist_ok=True)
     return home
+
+
+def _playwright_browsers_path() -> str:
+    """Keep browser binaries visible while cookies remain isolated per user."""
+    configured = os.getenv("GROUP_RESERVATIONS_PLAYWRIGHT_BROWSERS_PATH")
+    if configured:
+        return configured
+    if sys.platform == "darwin":
+        return str(Path.home() / "Library/Caches/ms-playwright")
+    return str(Path.home() / ".cache/ms-playwright")
 
 
 def create_opentable_client(user_id: str) -> MCPClient:
@@ -93,6 +116,7 @@ def create_opentable_client(user_id: str) -> MCPClient:
             "PATH": os.environ.get("PATH", ""),
             "HOME": str(user_home),
             "OPENTABLE_LOCATION": settings.opentable_location,
+            "PLAYWRIGHT_BROWSERS_PATH": _playwright_browsers_path(),
         },
     )
     return MCPClient(
@@ -111,6 +135,7 @@ def create_agent(client: MCPClient) -> Agent:
     return Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
+        callback_handler=None,
         tools=[google_places_search, google_places_details, client],
     )
 

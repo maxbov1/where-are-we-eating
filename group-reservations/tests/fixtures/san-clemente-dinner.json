@@ -1,0 +1,21 @@
+{
+  "organizer": {"email": "fixture-organizer@example.com", "cognito_sub": "fixture-organizer"},
+  "survey": {
+    "event_name": "Friday dinner",
+    "location": "San Clemente",
+    "dates": ["2026-09-04", "2026-09-11", "2026-09-18"],
+    "times": ["18:00", "19:00", "20:00"],
+    "questions": {
+      "cuisine": ["Italian", "Japanese", "Mexican", "Thai", "Indian", "Surprise me"],
+      "price": ["$", "$$", "$$$"],
+      "vibe": ["easygoing", "special", "anything"],
+      "distance": ["walkable", "short-ride", "anywhere"]
+    }
+  },
+  "responses": [
+    {"respondent_token": "fixture-guest-001", "dates": ["2026-09-04", "2026-09-11", "2026-09-18"], "times": ["18:00", "19:00", "20:00"], "cuisine": ["Italian", "Surprise me"], "distance": ["short-ride"], "vibe": ["anything"], "price": ["$$"]},
+    {"respondent_token": "fixture-guest-002", "dates": ["2026-09-11", "2026-09-18"], "times": ["18:00", "19:00"], "cuisine": ["Italian", "Mexican"], "distance": ["anywhere"], "vibe": ["easygoing"], "price": ["$"]},
+    {"respondent_token": "fixture-guest-003", "dates": ["2026-09-04", "2026-09-11"], "times": ["19:00", "20:00"], "cuisine": ["Japanese", "Thai"], "distance": ["walkable"], "vibe": ["special"], "price": ["$$"]},
+    {"respondent_token": "fixture-guest-004", "dates": ["2026-09-04", "2026-09-18"], "times": ["18:00", "20:00"], "cuisine": ["Italian", "Surprise me"], "distance": ["short-ride"], "vibe": ["anything"], "price": ["$$$"]}
+  ]
+}

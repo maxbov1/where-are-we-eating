@@ -64,6 +64,18 @@ PostgreSQL, and SMS delivery. See [POC_PLAN.md](POC_PLAN.md).
 - Restaurant candidate hydration and availability evidence.
 - Ranked recommendation cards with an organizer decision state.
 
+## Next three things
+
+1. Troubleshoot OpenTable MCP reliability: capture the failing request, fix
+   the upstream cleanup race, and determine whether OpenTable blocks the
+   browser session before treating live availability as production-ready.
+2. Replace free-form agent output with a versioned recommendation schema that
+   carries restaurant evidence, booking provider URLs, availability status,
+   and confidence without duplicating prose.
+3. Build the production seam: Cognito organizer identity, Aurora PostgreSQL,
+   Secrets Manager, AgentCore deployment, and an async job/status path for
+   recommendation runs.
+
 See [MIGRATION.md](MIGRATION.md) for what should move from HungryRadar and
 [ARCHITECTURE.md](ARCHITECTURE.md) for the proposed seams.
 
@@ -101,16 +113,55 @@ PYTHONPATH=src uvicorn groupreservations.api:app --reload --port 8000
 
 # Serve the frontend in a third terminal.
 python -m http.server 4173 --directory frontend
+
+# Seed four repeatable guest responses for the recommendation flow.
+PYTHONPATH=src python scripts/seed_fixture.py
+
+# Run fixture → cleaned report → Google Places/Bedrock agent end to end.
+PYTHONPATH=src python scripts/run_fixture_flow.py
 ```
 
 The agent exposes `google_places_search` and `google_places_details` first.
 Search returns hydrated canonical restaurant structs from Google Places before
 any reservation checks. It then allowlists only the OpenTable tools needed for
 availability and booking:
-`opentable_status`, `opentable_login`, `opentable_check_availability`, and
-`opentable_make_reservation`. OpenTable search and restaurant-detail tools are
-not used because Google Places owns discovery and place identity. Cancellation
-and reservation-history tools remain excluded.
+`opentable_status`, `opentable_login`, `opentable_search`,
+`opentable_get_restaurant`, `opentable_check_availability`, and
+`opentable_make_reservation`. Google Places remains the primary discovery
+source, while OpenTable search resolves a candidate to a real OpenTable record
+before availability is checked. Cancellation and reservation-history tools
+remain excluded.
+
+### Run the canned recommendation flow
+
+`tests/fixtures/san-clemente-dinner.json` contains one event and four guest
+response patterns. Seed it, copy the printed `survey_id`, and inspect the
+cleaned vote summary:
+
+```bash
+PYTHONPATH=src python scripts/seed_fixture.py
+curl http://127.0.0.1:8000/api/surveys/<survey_id>/aggregate
+```
+
+To run the real Bedrock-backed recommendation path against those responses:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/surveys/<survey_id>/recommendations \
+  -H 'X-Organizer-Id: <organizer_id>'
+```
+
+This uses the canned preferences, Google Places discovery, and the configured
+Bedrock model. OpenTable remains limited to availability and explicit booking.
+
+The one-command version creates a fresh fixture survey, prints the authoritative
+cleaned report, then sends that report to the agent:
+
+```bash
+PYTHONPATH=src python scripts/run_fixture_flow.py
+```
+
+Use `--aggregate-only` to validate cleaning without calling AWS or provider
+tools.
 
 ### Organizer booking handoff
 
@@ -189,8 +240,8 @@ PYTHONPATH=src python -m groupreservations.opentable_mcp --list-tools
 PYTHONPATH=src python -m groupreservations.opentable_mcp \
   "Find three Italian restaurants for 4 people in San Francisco this Friday at 7 PM"
 
-# Install Playwright browsers if OpenTable reports they are missing.
-npx playwright install
+# Install the Chromium binary used by the OpenTable MCP.
+npx playwright install chromium
 ```
 
 Strands uses Amazon Bedrock through an explicitly configured `BedrockModel`.
@@ -202,6 +253,15 @@ slots, and structured guest responses. The API converts that payload into an
 agent prompt and returns `{ "status": "ok", "answer": "..." }`. This stable
 HTTP boundary is intended to be wrapped by AgentCore later; the frontend does
 not need to know how the agent is hosted.
+
+Recommendation output keeps booking links separate from provider evidence:
+Google Maps, the restaurant website, and an explicit `booking_uri` are carried
+on the hydrated `Place` record. The booking URI is resolved from the
+restaurant's own website when an explicit reservation link is present; it can
+also come from OpenTable, Resy, Tock, or another provider returned by the
+agent. The frontend turns exact URLs into clickable links. A booking link is a
+handoff, not proof that the selected date/time is available, and the agent
+must never guess one from a restaurant name.
 
 The local API also provides `POST /api/users` for organizer records,
 `POST /api/surveys` to create a survey, `GET /api/surveys/{public_token}` for

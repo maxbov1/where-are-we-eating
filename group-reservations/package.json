@@ -1,0 +1,18 @@
+{
+  "name": "group-reservations",
+  "version": "1.0.0",
+  "description": "An organizer creates a lightweight coordination link, sends it by SMS, and lets each guest express preferences without typing. The agent combines the responses and recommends up to three restaurants, dates, and times that best fit the group.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}

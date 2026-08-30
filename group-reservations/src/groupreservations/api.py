@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException
@@ -40,6 +41,7 @@ class RecommendationRequest(BaseModel):
     times: list[str] = Field(min_length=1, max_length=3)
     responses: list[GuestResponse] = Field(max_length=500)
     questions: dict[str, list[str]] = Field(default_factory=dict)
+    report: dict[str, object] = Field(default_factory=dict)
 
 
 class UserRequest(BaseModel):
@@ -138,20 +140,30 @@ def survey_aggregate(survey_id: str) -> dict[str, object]:
 
 
 def _agent_prompt(payload: RecommendationRequest) -> str:
+    report = payload.report or {
+        "event": {"name": payload.event_name, "location": payload.location},
+        "response_count": len(payload.responses),
+        "active_questions": list(payload.questions),
+        "responses": [response.model_dump(exclude_none=True) for response in payload.responses],
+    }
     return f"""Select the best restaurant options for this group event.
 
-Event: {payload.event_name}
-Location: {payload.location}
-Candidate dates: {', '.join(payload.dates)}
-Candidate times: {', '.join(payload.times)}
-Configured question options: {payload.questions}
-Guest responses ({len(payload.responses)} total):
-{[response.model_dump() for response in payload.responses]}
+Authoritative cleaned group report:
+{json.dumps(report, indent=2)}
+
+Treat this report as authoritative. Do not recalculate votes, break ties, or
+claim a preference is a winner unless the report says so. Do not use disabled
+question options. Keep unknown provider facts explicitly unknown.
 
 Use Google Places first and return exactly three hydrated restaurant structs if
 possible. Then check OpenTable availability for the strongest candidates. Keep
 the Google restaurant results even if availability fails. Explain which date,
 time, and preference signals drove the ranking. Do not book anything.
+For each restaurant, preserve exact provider URLs in separate labeled fields:
+Google Maps, restaurant website, and the generic booking link plus its
+provider. Prefer the restaurant website's explicit booking link; OpenTable is
+only one possible provider. Never fabricate a provider URL. A listing URL does
+not prove availability; report those as separate facts.
 """
 
 
@@ -162,6 +174,7 @@ def _payload_from_aggregate(result: dict[str, object]) -> RecommendationRequest:
         event_name=str(result["event_name"]), location=str(result["location"]),
         dates=list(result["dates"]), times=list(result["times"]),
         questions=dict(result["questions"]),
+        report=dict(result.get("report", {})),
         responses=[GuestResponse(
             dates=response.get("dates", []), times=response.get("times", []),
             cuisines=response.get("cuisine", []), dietary=response.get("dietary", []),

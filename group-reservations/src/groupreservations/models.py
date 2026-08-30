@@ -13,6 +13,9 @@ class Place:
     google_maps_uri: str | None = None
     description: str | None = None
     website_uri: str | None = None
+    booking_uri: str | None = None
+    booking_provider: str | None = None
+    opentable_uri: str | None = None
     menu_uri: str | None = None
     rating: float | None = None
     price_level: str | None = None

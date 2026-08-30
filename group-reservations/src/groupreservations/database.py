@@ -207,4 +207,32 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
             bucket = summary.setdefault(key, {})
             for value in values:
                 bucket[value] = bucket.get(value, 0) + 1
-    return {"survey_id": survey["id"], "event_name": survey["event_name"], "location": survey["location"], "dates": survey["dates"], "times": survey["times"], "questions": survey["questions"], "response_count": len(survey["responses"]), "preference_summary": summary, "responses": [{key: value for key, value in response.items() if key not in {"respondent_user_id", "response_id"}} for response in survey["responses"]]}
+
+    def leaders(key: str) -> list[dict[str, Any]]:
+        return [{"value": value, "votes": votes} for value, votes in sorted(summary.get(key, {}).items(), key=lambda item: (-item[1], item[0])) if votes == max(summary.get(key, {}).values(), default=0)]
+
+    def consensus(key: str) -> str:
+        votes = summary.get(key, {})
+        if not votes:
+            return "no responses"
+        top = max(votes.values())
+        if list(votes.values()).count(top) > 1:
+            return "tie"
+        if top == len(survey["responses"]):
+            return "unanimous"
+        if top >= len(survey["responses"])*0.75:
+            return "strong"
+        if top >= len(survey["responses"])*0.5:
+            return "moderate"
+        return "split"
+
+    report = {
+        "event": {"name": survey["event_name"], "location": survey["location"]},
+        "response_count": len(survey["responses"]),
+        "active_questions": list(survey["questions"]),
+        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "date_consensus": consensus("dates"), "time_consensus": consensus("times")},
+        "preferences": {key: {"leaders": leaders(key), "consensus": consensus(key), "votes": values} for key, values in summary.items() if key not in {"dates", "times"}},
+        "preference_summary": summary,
+        "responses": [{key: value for key, value in response.items() if key not in {"respondent_user_id", "response_id"}} for response in survey["responses"]],
+    }
+    return {"survey_id": survey["id"], "event_name": survey["event_name"], "location": survey["location"], "dates": survey["dates"], "times": survey["times"], "questions": survey["questions"], "response_count": len(survey["responses"]), "preference_summary": summary, "report": report, "responses": report["responses"]}

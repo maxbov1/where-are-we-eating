@@ -77,7 +77,7 @@ $('run-agent').addEventListener('click', async () => {
     const response = await fetch(`${API_BASE}/api/surveys/${state.event.surveyId}/recommendations`, { method:'POST', headers:{'Content-Type':'application/json','X-Organizer-Id':state.organizerId || 'local-organizer'} });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Agent request failed');
-    $('recommendations').innerHTML = `<article class="agent-answer"><div class="card-kicker">✦ / agent response</div><div>${(data.answer || '').replaceAll('\n','<br />')}</div></article>`;
+    $('recommendations').innerHTML = `<article class="agent-answer"><div class="card-kicker">✦ / agent response</div><div>${formatAgentAnswer(data.answer || '')}</div></article>`;
   } catch (error) {
     $('recommendations').innerHTML = `<p class="error-message">Could not reach the agent API. Start it with <code>PYTHONPATH=src uvicorn groupreservations.api:app --reload --port 8000</code>.<br /><small>${error.message}</small></p>`;
   } finally {
@@ -85,6 +85,13 @@ $('run-agent').addEventListener('click', async () => {
     button.innerHTML = 'Find our top 3 <span>✦</span>';
   }
 });
+
+function formatAgentAnswer(value) {
+  const escaped = value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  const linkedMarkdown = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1 ↗</a>');
+  const linkedPlain = linkedMarkdown.replace(/(?<!["=])(https?:\/\/[^\s<&]+)/g, '<a href="$1" target="_blank" rel="noreferrer">$1 ↗</a>');
+  return linkedPlain.replaceAll('\n', '<br />');
+}
 
 async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, dates:survey.dates, times:survey.times, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href }; prepareSurvey(); show('survey'); }
 loadPublicSurvey();
