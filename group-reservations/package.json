@@ -7,6 +7,7 @@
     "test": "tests"
   },
   "scripts": {
+    "dev": "./.venv/bin/python scripts/dev.py",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
