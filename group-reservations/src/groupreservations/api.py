@@ -155,6 +155,12 @@ Treat this report as authoritative. Do not recalculate votes, break ties, or
 claim a preference is a winner unless the report says so. Do not use disabled
 question options. Keep unknown provider facts explicitly unknown.
 
+If the report includes a "confidence" block, honor it. When overall.label is
+"low" or "none", present the options as tentative and lead with the group's
+disagreement. Surface every item in confidence.notes (for example a split on
+budget or dates) instead of papering over it. Higher confidence means you may
+state a group preference more directly.
+
 Use Google Places first and return exactly three hydrated restaurant structs if
 possible. Then check OpenTable availability for the strongest candidates. Keep
 the Google restaurant results even if availability fails. Explain which date,

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .scoring import score_confidence
 
 
 def _now() -> str:
@@ -226,6 +227,15 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
             return "moderate"
         return "split"
 
+    # Score every schedule and active question, even ones nobody answered yet
+    # (consensus() returns "no responses" for those, which scoring turns into a note).
+    scored_dimensions = ["dates", "times", *[key for key in survey["questions"] if key not in {"dates", "times"}]]
+    confidence = score_confidence(
+        len(survey["responses"]),
+        summary,
+        {key: consensus(key) for key in scored_dimensions},
+    )
+
     report = {
         "event": {"name": survey["event_name"], "location": survey["location"]},
         "response_count": len(survey["responses"]),
@@ -233,6 +243,7 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
         "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "date_consensus": consensus("dates"), "time_consensus": consensus("times")},
         "preferences": {key: {"leaders": leaders(key), "consensus": consensus(key), "votes": values} for key, values in summary.items() if key not in {"dates", "times"}},
         "preference_summary": summary,
+        "confidence": confidence,
         "responses": [{key: value for key, value in response.items() if key not in {"respondent_user_id", "response_id"}} for response in survey["responses"]],
     }
-    return {"survey_id": survey["id"], "event_name": survey["event_name"], "location": survey["location"], "dates": survey["dates"], "times": survey["times"], "questions": survey["questions"], "response_count": len(survey["responses"]), "preference_summary": summary, "report": report, "responses": report["responses"]}
+    return {"survey_id": survey["id"], "event_name": survey["event_name"], "location": survey["location"], "dates": survey["dates"], "times": survey["times"], "questions": survey["questions"], "response_count": len(survey["responses"]), "preference_summary": summary, "confidence": confidence, "report": report, "responses": report["responses"]}
