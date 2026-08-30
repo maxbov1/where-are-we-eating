@@ -148,6 +148,12 @@ PYTHONPATH=src python scripts/seed_fixture.py
 curl http://127.0.0.1:8000/api/surveys/<survey_id>/aggregate
 ```
 
+The aggregate response and its `report` carry a deterministic `confidence`
+block: a per-dimension score, an overall `high`/`medium`/`low`/`none` band, the
+weakest dimension, and plain-language notes (low response count, split votes,
+unanswered questions). It is computed in `scoring.py` from the vote tallies
+alone, before any agent call, and the agent is instructed to honor it.
+
 To run the real Bedrock-backed recommendation path against those responses:
 
 ```bash

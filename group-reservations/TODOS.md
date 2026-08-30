@@ -16,12 +16,20 @@ Remaining work is grouped into three tiers by difficulty:
 - [x] Add a seeded local event command for repeatable demos.
       `scripts/seed_fixture.py` seeds the San Clemente fixture and prints the
       `survey_id`; `scripts/run_fixture_flow.py` runs it end to end.
+- [x] Add deterministic confidence scoring before agent prose.
+      `scoring.py` turns the aggregate's vote tallies and consensus labels into
+      a `confidence` block (per-dimension score, overall band, weakest
+      dimension, plain-language notes). `aggregate_survey` attaches it to the
+      report and `_agent_prompt` instructs the agent to honor it.
 
 ## Tier 1 — Local, no infrastructure
 
 - [ ] Add network-free tests for survey creation, option filtering, duplicate
       response updates, aggregation, and organizer authorization.
-- [ ] Add deterministic ranking and confidence scoring before agent prose.
+- [ ] Add deterministic restaurant ranking before agent prose. Blocked until
+      restaurant candidates are hydrated outside the agent; today the agent
+      still does discovery and ranking in one call. Group-preference confidence
+      scoring is done (see above).
 - [ ] Add a local Cognito/JWT adapter or documented test-token workflow.
       `auth.py` already has `mint_access_token` / `verify_access_token`; wire
       them into the API and document a dev token.
