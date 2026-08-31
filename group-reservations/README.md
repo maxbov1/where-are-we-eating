@@ -96,6 +96,9 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
+# Install the Python Playwright runtime used by the adaptive booking browser.
+python -m playwright install chromium
+
 # Copy the safe defaults.
 cp .env.example .env
 
@@ -119,7 +122,7 @@ python scripts/dev.py --api-port 8001 --frontend-port 5173 --no-reload
 #   PYTHONPATH=src uvicorn groupreservations.api:app --reload --port 8000
 #   python -m http.server 4173 --directory frontend
 
-# Seed four repeatable guest responses for the recommendation flow.
+# Seed five repeatable guest responses for the recommendation flow.
 PYTHONPATH=src python scripts/seed_fixture.py
 
 # Run fixture → cleaned report → Google Places/Bedrock agent end to end.
@@ -139,8 +142,9 @@ remain excluded.
 
 ### Run the canned recommendation flow
 
-`tests/fixtures/san-clemente-dinner.json` contains one event and four guest
-response patterns. Seed it, copy the printed `survey_id`, and inspect the
+`tests/fixtures/san-clemente-dinner.json` contains one event and five guest
+response patterns with limited date/time crossover and dietary constraints.
+Seed it, copy the printed `survey_id`, and inspect the
 cleaned vote summary:
 
 ```bash
@@ -193,6 +197,17 @@ For the local POC, mint tokens with `GROUP_RESERVATIONS_JWT_SECRET` and use
 `mint_access_token`; in the web app, the existing organizer auth service should
 own token issuance instead. JWTs do not authenticate to OpenTable and must not
 be sent to the OpenTable MCP server.
+
+The recommendation endpoints accept `Authorization: Bearer <token>`. To make
+a local development token:
+
+```bash
+export GROUP_RESERVATIONS_JWT_SECRET='use-a-local-secret-with-at-least-32-characters'
+PYTHONPATH=src python -c 'from groupreservations.auth import mint_access_token; print(mint_access_token("local-organizer"))'
+```
+
+The legacy `X-Organizer-Id` header remains available for local-only calls while
+the Cognito/API Gateway boundary is being built.
 
 ## Google Places Setup
 
@@ -273,6 +288,18 @@ also come from OpenTable, Resy, Tock, or another provider returned by the
 agent. The frontend turns exact URLs into clickable links. A booking link is a
 handoff, not proof that the selected date/time is available, and the agent
 must never guess one from a restaurant name.
+
+When a verified OpenTable ID or exact provider URL is available, the booking
+handoff uses OpenTable's current availability shape:
+
+```text
+https://www.opentable.com/booking/restref/availability?restref=<verified-id>&dateTime=<ISO-local-time>&covers=<party-size>
+```
+
+Existing provider parameters such as `lang`, `ot_source`, and `corrid` are
+preserved. The URL format may be inferred, but the `restref` value never is.
+If OpenTable cannot return a verified record, availability stays unknown and
+the exact restaurant booking page is retained for the organizer.
 
 The local API also provides `POST /api/users` for organizer records,
 `POST /api/surveys` to create a survey, `GET /api/surveys/{public_token}` for

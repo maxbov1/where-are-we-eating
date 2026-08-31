@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .opentable_mcp import run
+from .auth import verify_access_token
 from .database import aggregate_survey, append_response, create_survey, create_user, get_survey, init_db
 from .config import settings
 
@@ -151,9 +152,14 @@ def _agent_prompt(payload: RecommendationRequest) -> str:
 Authoritative cleaned group report:
 {json.dumps(report, indent=2)}
 
-Treat this report as authoritative. Do not recalculate votes, break ties, or
-claim a preference is a winner unless the report says so. Do not use disabled
-question options. Keep unknown provider facts explicitly unknown.
+Treat this report as authoritative. Do not recalculate votes or use disabled
+options. When the report contains ties, still choose a concrete date, time,
+and restaurant. Use this tie-break order: (1) maximize the number of guests
+who can attend the date/time pair using schedule.pair_leaders, (2) prefer the
+pair with the strongest restaurant availability and preference fit, (3) prefer
+the strongest cuisine, budget, vibe, and distance fit, and (4) use the
+earliest date/time as the stable final fallback. State which rule settled the
+tie. Keep unknown provider facts explicitly unknown.
 
 If the report includes a "confidence" block, honor it. When overall.label is
 "low" or "none", present the options as tentative and lead with the group's
@@ -161,16 +167,40 @@ disagreement. Surface every item in confidence.notes (for example a split on
 budget or dates) instead of papering over it. Higher confidence means you may
 state a group preference more directly.
 
-Use Google Places first and return exactly three hydrated restaurant structs if
-possible. Then check OpenTable availability for the strongest candidates. Keep
-the Google restaurant results even if availability fails. Explain which date,
-time, and preference signals drove the ranking. Do not book anything.
-For each restaurant, preserve exact provider URLs in separate labeled fields:
+Use Google Places first and select one best restaurant, date, and time for the
+group. The agent owns this decision and must not ask the organizer to choose
+among tied dates or times. Then check availability for the strongest candidate.
+Keep two alternatives as short fallback options, but do not present them as an
+undecided top-three list. Keep the Google restaurant results even if
+availability fails. Explain which date, time, and preference signals drove the
+decision. Do not book anything until the organizer confirms.
+For the primary restaurant, preserve exact provider URLs in separate labeled fields:
 Google Maps, restaurant website, and the generic booking link plus its
 provider. Prefer the restaurant website's explicit booking link; OpenTable is
 only one possible provider. Never fabricate a provider URL. A listing URL does
 not prove availability; report those as separate facts.
-"""
+Mention up to two alternatives briefly after the primary choice. End with this
+confirmation request using the selected values and prepared booking URL:
+"Confirm reservation for your group of X at Y on DATE at TIME? [Confirm
+reservation](URL)". The link is a human confirmation handoff; never imply the
+reservation is already made.
+    """
+
+
+def _resolve_organizer_id(
+    authorization: str | None,
+    legacy_id: str | None,
+) -> str:
+    """Use a bearer token when supplied; retain the local header workflow."""
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.casefold() != "bearer" or not token:
+            raise HTTPException(status_code=401, detail="Invalid bearer authorization")
+        try:
+            return verify_access_token(token)
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail="Invalid access token") from exc
+    return legacy_id or "local-organizer"
 
 
 def _payload_from_aggregate(result: dict[str, object]) -> RecommendationRequest:
@@ -194,9 +224,10 @@ def _payload_from_aggregate(result: dict[str, object]) -> RecommendationRequest:
 def recommendations(
     payload: RecommendationRequest,
     x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
     """Pass structured survey results to the agent for recommendation."""
-    organizer_id = x_organizer_id or "local-organizer"
+    organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
     if payload.survey_id:
         survey_record = get_survey(payload.survey_id)
         if not survey_record:
@@ -212,6 +243,7 @@ def recommendations(
 def survey_recommendations(
     survey_id: str,
     x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
     """Load a persisted survey and send its responses to the agent."""
     record = get_survey(survey_id)
@@ -221,4 +253,6 @@ def survey_recommendations(
     if not aggregate:
         raise HTTPException(status_code=404, detail="Survey not found")
     payload = _payload_from_aggregate(aggregate)
-    return recommendations(payload, x_organizer_id=x_organizer_id)
+    return recommendations(
+        payload, x_organizer_id=x_organizer_id, authorization=authorization
+    )

@@ -235,12 +235,26 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
         summary,
         {key: consensus(key) for key in scored_dimensions},
     )
+    pair_counts = [
+        {
+            "date": date,
+            "time": time,
+            "votes": sum(
+                date in response.get("dates", []) and time in response.get("times", [])
+                for response in survey["responses"]
+            ),
+        }
+        for date in survey["dates"]
+        for time in survey["times"]
+    ]
+    pair_top = max((pair["votes"] for pair in pair_counts), default=0)
+    pair_leaders = [pair for pair in pair_counts if pair["votes"] == pair_top]
 
     report = {
         "event": {"name": survey["event_name"], "location": survey["location"]},
         "response_count": len(survey["responses"]),
         "active_questions": list(survey["questions"]),
-        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "date_consensus": consensus("dates"), "time_consensus": consensus("times")},
+        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "pair_leaders": pair_leaders, "date_consensus": consensus("dates"), "time_consensus": consensus("times")},
         "preferences": {key: {"leaders": leaders(key), "consensus": consensus(key), "votes": values} for key, values in summary.items() if key not in {"dates", "times"}},
         "preference_summary": summary,
         "confidence": confidence,

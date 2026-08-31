@@ -11,6 +11,7 @@ class Place:
     name: str
     address: str
     google_maps_uri: str | None = None
+    google_reservation_uri: str | None = None
     description: str | None = None
     website_uri: str | None = None
     booking_uri: str | None = None

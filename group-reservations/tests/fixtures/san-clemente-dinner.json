@@ -7,15 +7,17 @@
     "times": ["18:00", "19:00", "20:00"],
     "questions": {
       "cuisine": ["Italian", "Japanese", "Mexican", "Thai", "Indian", "Surprise me"],
-      "price": ["$", "$$", "$$$"],
-      "vibe": ["easygoing", "special", "anything"],
-      "distance": ["walkable", "short-ride", "anywhere"]
+      "price": ["$", "$$", "$$$", "$$$$"],
+      "vibe": ["easygoing", "special", "lively", "anything"],
+      "distance": ["walkable", "short-ride", "anywhere"],
+      "dietary": ["vegetarian", "vegan", "gluten-free", "nut-free", "no restrictions"]
     }
   },
   "responses": [
-    {"respondent_token": "fixture-guest-001", "dates": ["2026-09-04", "2026-09-11", "2026-09-18"], "times": ["18:00", "19:00", "20:00"], "cuisine": ["Italian", "Surprise me"], "distance": ["short-ride"], "vibe": ["anything"], "price": ["$$"]},
-    {"respondent_token": "fixture-guest-002", "dates": ["2026-09-11", "2026-09-18"], "times": ["18:00", "19:00"], "cuisine": ["Italian", "Mexican"], "distance": ["anywhere"], "vibe": ["easygoing"], "price": ["$"]},
-    {"respondent_token": "fixture-guest-003", "dates": ["2026-09-04", "2026-09-11"], "times": ["19:00", "20:00"], "cuisine": ["Japanese", "Thai"], "distance": ["walkable"], "vibe": ["special"], "price": ["$$"]},
-    {"respondent_token": "fixture-guest-004", "dates": ["2026-09-04", "2026-09-18"], "times": ["18:00", "20:00"], "cuisine": ["Italian", "Surprise me"], "distance": ["short-ride"], "vibe": ["anything"], "price": ["$$$"]}
+    {"respondent_token": "fixture-guest-001", "dates": ["2026-09-04"], "times": ["18:00"], "cuisine": ["Italian"], "distance": ["walkable"], "vibe": ["easygoing"], "price": ["$$"], "dietary": ["no restrictions"]},
+    {"respondent_token": "fixture-guest-002", "dates": ["2026-09-04", "2026-09-11"], "times": ["20:00"], "cuisine": ["Mexican", "Italian"], "distance": ["short-ride"], "vibe": ["lively"], "price": ["$$$"], "dietary": ["gluten-free"]},
+    {"respondent_token": "fixture-guest-003", "dates": ["2026-09-11"], "times": ["19:00"], "cuisine": ["Japanese", "Thai"], "distance": ["walkable"], "vibe": ["special"], "price": ["$$"], "dietary": ["no restrictions"]},
+    {"respondent_token": "fixture-guest-004", "dates": ["2026-09-18"], "times": ["18:00", "20:00"], "cuisine": ["Italian", "Surprise me"], "distance": ["short-ride"], "vibe": ["anything"], "price": ["$$$$"], "dietary": ["nut-free"]},
+    {"respondent_token": "fixture-guest-005", "dates": ["2026-09-04", "2026-09-18"], "times": ["19:00"], "cuisine": ["Mexican"], "distance": ["anywhere"], "vibe": ["lively"], "price": ["$$"], "dietary": ["vegetarian"]}
   ]
 }

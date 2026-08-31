@@ -8,6 +8,7 @@ confirmation flow before they are added.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from collections.abc import Sequence
@@ -21,13 +22,21 @@ from strands.models import BedrockModel
 from strands.tools.mcp import MCPClient
 
 from .auth import validate_user_id
+from .booking import prepare_booking_link
 from .config import settings
 from .places_tools import google_places_details, google_places_search
+from .reservation_browser import create_reservation_browser_tools
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO if os.getenv("GROUP_RESERVATIONS_DEBUG") else logging.WARNING,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 OPENTABLE_PACKAGE = "@striderlabs/mcp-opentable"
 
-# Google Places owns discovery and restaurant identity. OpenTable is limited to
-# availability and the explicit organizer booking flow.
+# Google Places owns discovery and restaurant identity. OpenTable resolves
+# records, checks availability, and handles the explicit organizer booking flow.
 OPENTABLE_TOOLS = [
     "opentable_status",
     "opentable_login",
@@ -51,16 +60,39 @@ opening-hour evidence. Use google_places_details only to refresh one
 restaurant. Google Places is the source of truth for candidate discovery and
 place identity.
 
-After Google discovery, use OpenTable search/get_restaurant to resolve the
-matching OpenTable record before checking availability. Pass the returned
-OpenTable restaurant ID or profile URL to the availability tool; do not invent
-an ID or URL from the restaurant name. Availability does not require an
+For a restaurant-owned booking page, use the reservation browser tools only
+with the exact booking URL returned by Google Places or the restaurant. Open
+the page, call `reservation_find_booking_links`, and inspect its controls. That
+tool checks anchors, iframes, and embedded provider attributes such as
+`data-ot-restref`, which may contain the real OpenTable ID on a submit input.
+Use the returned exact link; never derive an ID from the restaurant name.
+Then fill the requested date, time, party size, and organizer details when the
+page supports them. You may click search or availability controls, but never click a final Book,
+Reserve, or Confirm button; return the prepared state and require an explicit
+organizer confirmation for that external side effect.
+
+After Google discovery, use an exact OpenTable booking URL when the hydrated
+restaurant struct already has one. A URL shaped like
+`/booking/restref/availability?restref=...` is a verified provider path from
+the restaurant's website: preserve its `restref`, `lang`, `ot_source`, and
+`corrid` values and use it for the availability/browser handoff. Do not call
+OpenTable search merely to replace that exact URL. Otherwise, use OpenTable
+search/get_restaurant to resolve the matching record before checking
+availability. Pass the returned OpenTable restaurant ID or profile URL to the
+availability tool; do not invent an ID or URL from the restaurant name.
+When an exact `/booking/restref/availability` URL is available, prefer the
+reservation browser for inspection and date/time preparation so the URL is not
+rewritten by an older provider tool.
+Availability does not require an
 OpenTable login. Never ask the organizer to log in merely to discover
 restaurants or check availability. For booking, verify the
 organizer's intent, call opentable_status, and if needed call opentable_login.
 Never make a booking unless the organizer clearly confirmed the exact
 restaurant, date, time, and party size. Never claim a reservation was made
 unless opentable_make_reservation reports success.
+
+Before your final response, call reservation_close when you used the adaptive
+reservation browser. This closes the organizer-scoped browser session.
 
 The Google Places results are the primary answer. Always return the hydrated
 Google restaurant structs and their links, even when a later OpenTable call
@@ -82,6 +114,33 @@ reservation URL. Never invent a provider URL from a restaurant name or claim
 that a listing link proves a slot is available. If no booking link is known,
 say "Booking link unavailable". A booking link is a user handoff; live
 date/time availability remains a separate provider result.
+When an OpenTable tool fails, include its exact returned error in a compact
+"OpenTable diagnostics" note. Do not convert a network, timeout, navigation,
+or authentication error into a generic statement that the user needs to log
+in. Authentication is required for booking, not for search or availability.
+
+For each final candidate, produce a concrete booking option. First inspect the
+candidate's exact Google Maps URL with the reservation browser and call
+`reservation_find_booking_links`; prefer an exact Google Reserve URL when one
+is present because it can provide a provider-neutral, login-free reservation
+flow. Then use the exact hydrated booking URI or embedded provider URL. Never
+write only "visit the website" when an exact URL or browser-prepared path is
+available. Select one primary restaurant/date/time for the group. Mention up
+to two alternatives briefly, but do not ask the organizer to resolve the
+decision. End by asking for explicit confirmation of the selected restaurant,
+date, time, and party size, with the exact prepared booking URL as the
+confirmation link.
+
+For every candidate, call `reservation_discover_booking` with its exact
+restaurant website URL and the selected date, time, and party size. Use the
+returned `booking_url` and `provider` in the report. The tool searches links,
+forms, iframes, buttons, and data attributes; it prefers Google Reserve,
+constructs a prefilled OpenTable URL from a discovered verified ID, and falls
+back to the exact restaurant page when no provider link exists.
+Before printing any candidate's booking link, call `prepare_booking_link` with
+the candidate's raw booking URI and the selected date, time, and party size.
+Print the tool's returned URL, never the raw `booking_uri`. This is required
+even when the raw URI is an OpenTable `/restref/client` link.
 """
 
 
@@ -119,13 +178,16 @@ def create_opentable_client(user_id: str) -> MCPClient:
             "PLAYWRIGHT_BROWSERS_PATH": _playwright_browsers_path(),
         },
     )
+    debug = os.getenv("GROUP_RESERVATIONS_OPENTABLE_DEBUG")
+    if debug:
+        parameters.env["DEBUG"] = debug
     return MCPClient(
         lambda: stdio_client(parameters),
         tool_filters={"allowed": OPENTABLE_TOOLS},
     )
 
 
-def create_agent(client: MCPClient) -> Agent:
+def create_agent(client: MCPClient, browser_tools: list[object] | None = None) -> Agent:
     """Build the Strands agent from the already configured MCP client."""
     model = BedrockModel(
         model_id=settings.model_id,
@@ -136,7 +198,8 @@ def create_agent(client: MCPClient) -> Agent:
         model=model,
         system_prompt=SYSTEM_PROMPT,
         callback_handler=None,
-        tools=[google_places_search, google_places_details, client],
+        tools=[google_places_search, google_places_details, prepare_booking_link,
+               *(browser_tools or []), client],
     )
 
 
@@ -162,11 +225,20 @@ def list_tools(user_id: str = "local-organizer") -> list[str]:
 
 def run(prompt: str, *, user_id: str = "local-organizer") -> str:
     """Run one organizer prompt while keeping the MCP lifecycle bounded."""
+    logger.info("agent stage=run_start user_id=%s prompt_chars=%d", user_id, len(prompt))
     client = create_opentable_client(user_id)
+    browser, browser_tools = create_reservation_browser_tools(user_id)
     # Agent owns the ToolProvider lifecycle here. Starting `client` with a
     # context manager first would make Agent try to start the same MCP session
     # twice and raise "the client session is currently running".
-    return str(create_agent(client)(prompt))
+    try:
+        logger.info("agent stage=agent_start tools=%d", len(browser_tools) + 3)
+        result = str(create_agent(client, browser_tools)(prompt))
+        logger.info("agent stage=agent_complete result_chars=%d", len(result))
+        return result
+    finally:
+        logger.info("agent stage=run_cleanup")
+        browser.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

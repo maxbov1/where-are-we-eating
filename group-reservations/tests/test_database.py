@@ -39,3 +39,45 @@ def test_same_guest_updates_one_response(tmp_path):
     assert first["respondent_user_id"] == second["respondent_user_id"]
     assert stored["response_count"] == 1
     assert stored["preference_summary"]["cuisine"] == {"Japanese": 1}
+
+
+def test_created_survey_is_publicly_readable_with_normalized_options(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("organizer@example.com", "cognito-sub-3")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian", "Japanese"], "price": ["$", "$$"]},
+    )
+    public = database.get_survey(survey["public_token"])
+    assert public["id"] == survey["id"]
+    assert public["questions"] == {"cuisine": ["Italian", "Japanese"], "price": ["$", "$$"]}
+
+
+def test_disabled_or_unknown_options_are_excluded_from_saved_answers(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("organizer@example.com", "cognito-sub-4")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian", "Japanese"]},
+    )
+    database.append_response(
+        survey["public_token"], "guest-filter-test", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian", "Mexican"]},
+    )
+    stored = database.aggregate_survey(survey["id"])
+    assert stored["preference_summary"]["cuisine"] == {"Italian": 1}
+
+
+def test_aggregate_exposes_all_tied_date_time_pairs(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("organizer@example.com", "cognito-sub-5")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente",
+        ["2026-09-04", "2026-09-11"], ["18:00", "19:00"], {},
+    )
+    database.append_response(survey["public_token"], "guest-pair-a", ["2026-09-04"], ["18:00"], {})
+    database.append_response(survey["public_token"], "guest-pair-b", ["2026-09-11"], ["19:00"], {})
+    pairs = database.aggregate_survey(survey["id"])["report"]["schedule"]["pair_leaders"]
+    assert {(pair["date"], pair["time"]) for pair in pairs} == {
+        ("2026-09-04", "18:00"), ("2026-09-11", "19:00")
+    }

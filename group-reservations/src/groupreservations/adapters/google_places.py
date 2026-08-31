@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 import re
 
 import httpx
 
 from ..models import Place
+from ..booking import classify_booking_provider
 
 _BASE_URL = "https://places.googleapis.com/v1"
 _SEARCH_FIELD_MASK = (
@@ -35,10 +36,23 @@ class _BookingLinkParser(HTMLParser):
         self._text = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if self.booking_url or tag.lower() != "a":
-            return
+        if self.booking_url or tag.lower() not in {"a", "iframe"}:
+            # OpenTable's widget commonly puts the provider URL on an
+            # <input> submit control instead of an anchor. Handle that below.
+            if tag.lower() != "input":
+                return
         values = dict(attrs)
-        href = values.get("href") or ""
+        href = values.get("href") or values.get("src") or ""
+        embedded = values.get("data-ot-restref")
+        if embedded:
+            params = dict(parse_qsl(embedded, keep_blank_values=True))
+            params.pop("rid", None)
+            if params.get("restref"):
+                self.booking_url = (
+                    "https://www.opentable.com/booking/restref/availability?"
+                    + urlencode(params)
+                )
+                return
         label = " ".join(filter(None, (values.get("aria-label"), values.get("title"), self._text)))
         if _BOOKING_WORDS.search(f"{label} {href}"):
             candidate = urljoin(self.base_url, href)
@@ -63,8 +77,7 @@ def _website_booking_link(website_uri: str | None) -> tuple[str | None, str | No
         parser = _BookingLinkParser(str(response.url))
         parser.feed(response.text[:1_000_000])
         if parser.booking_url:
-            host = urlparse(parser.booking_url).netloc.lower()
-            provider = "OpenTable" if "opentable." in host else "Restaurant website"
+            provider = classify_booking_provider(parser.booking_url, website_uri)
             return parser.booking_url, provider
     except Exception:
         pass
