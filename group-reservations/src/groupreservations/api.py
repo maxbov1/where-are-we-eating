@@ -66,7 +66,7 @@ class SurveyResponseRequest(BaseModel):
     dietary: list[str] = Field(default_factory=list, max_length=10)
     distance: str | None = None
     vibe: str | None = Field(default=None, min_length=1, max_length=40)
-    price: str | None = Field(default=None, min_length=1, max_length=10)
+    price: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 @app.get("/health")
@@ -108,7 +108,7 @@ def survey(public_token: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Survey not found")
     return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "questions")}
 
-
+# records a guest's response to the survey
 @app.post("/api/surveys/{public_token}/responses")
 def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[str, object]:
     """Record a response using a hashed anonymous guest token."""
