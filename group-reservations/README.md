@@ -19,6 +19,8 @@ product:
   timestamps.
 - Strands orchestrates Google Places and the OpenTable MCP.
 - OpenTable is limited to availability checks and explicit booking actions.
+- Exact Google Reserve and restaurant booking pages are inspected first when
+  available.
 - OpenTable login is deferred until the organizer confirms a booking.
 - Organizers can configure guest-facing question options, currently including
   cuisine choices, without changing the survey code.
@@ -136,9 +138,10 @@ availability and booking:
 `opentable_status`, `opentable_login`, `opentable_search`,
 `opentable_get_restaurant`, `opentable_check_availability`, and
 `opentable_make_reservation`. Google Places remains the primary discovery
-source, while OpenTable search resolves a candidate to a real OpenTable record
-before availability is checked. Cancellation and reservation-history tools
-remain excluded.
+source. When a restaurant exposes an exact Google Reserve or provider booking
+path, the agent uses that path first; otherwise OpenTable search must resolve a
+real record before availability is checked. Cancellation and
+reservation-history tools remain excluded.
 
 ### Run the canned recommendation flow
 
@@ -187,7 +190,7 @@ confirmed by the organizer. No OpenTable password passes through the survey,
 prompt, or agent logs.
 
 The app JWT is only our identity token. Its `sub` claim is the organizer ID.
-Every request must verify that token before creating the OpenTable MCP client,
+Production requests must verify that token before creating the OpenTable MCP client,
 then pass that organizer ID to `create_opentable_client(user_id)`. That client
 launches with `HOME=.local/opentable-sessions/<user_id>/home`, so the MCP
 server's cookie file at `~/.strider/opentable/cookies.json` is isolated per
@@ -208,6 +211,16 @@ PYTHONPATH=src python -c 'from groupreservations.auth import mint_access_token; 
 
 The legacy `X-Organizer-Id` header remains available for local-only calls while
 the Cognito/API Gateway boundary is being built.
+
+### Booking discovery and handoffs
+
+For each candidate, the agent opens the exact restaurant website and inspects
+anchors, forms, iframes, buttons, and booking data attributes. It prefers an
+exact Google Reserve URL, then embedded OpenTable/Resy/Tock links, and finally
+the exact restaurant page. OpenTable `restref` values found in website markup
+are used to generate a prefilled availability URL with the selected survey
+date, time, and party size. The agent never derives a provider ID from a
+restaurant name.
 
 ## Google Places Setup
 
@@ -318,8 +331,10 @@ src/groupreservations/
 ├── auth.py                    # Organizer JWT helpers
 ├── config.py                  # Environment-backed settings
 ├── models.py                  # Place and availability structs
+├── booking.py                 # Provider-aware booking URL handoffs
 ├── opentable_mcp.py           # Strands agent/OpenTable boundary
 ├── places_tools.py            # Hydrated Google Places tools
+├── reservation_browser.py     # Serialized adaptive booking browser
 └── ports.py                   # Provider protocols
 ```
 

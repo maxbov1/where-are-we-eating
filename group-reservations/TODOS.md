@@ -30,7 +30,7 @@ Remaining work is grouped into three tiers by difficulty:
       restaurant candidates are hydrated outside the agent; today the agent
       still does discovery and ranking in one call. Group-preference confidence
       scoring is done (see above).
-- [ ] Add a local Cognito/JWT adapter or documented test-token workflow.
+- [x] Add a local Cognito/JWT adapter or documented test-token workflow.
       `auth.py` already has `mint_access_token` / `verify_access_token`; wire
       them into the API and document a dev token.
 
