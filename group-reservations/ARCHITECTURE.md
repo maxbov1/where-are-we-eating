@@ -65,6 +65,7 @@ agent orchestration.
 ```text
 frontend survey payload
     -> POST /api/users or /api/surveys or /api/surveys/{token}/responses
+    -> Google Places Autocomplete + Place Details for city/origin selection
     -> SQLite normalized survey tables (Aurora PostgreSQL in production)
     -> GET /api/surveys/{survey_id}/aggregate
     -> preference counts and cleaned response context
@@ -94,6 +95,13 @@ availability is returned as unknown with the failure recorded.
   submitted timestamp, and revision timestamp.
 - `PreferenceSummary`: response count, participation rate, per-option support,
   conflicts, and confidence.
+- `GuestOrigin`: optional selected Google Place ID, display label, and
+  coordinates for approximate guest travel origin; exact home addresses are
+  not required or stored.
+- Guest budget answers use explicit per-person bands. Guest distance answers
+  use a numeric maximum restaurant radius from the meetup location, with a
+  30+ mile endpoint for dispersed groups; guest home locations are not
+  collected in the MVP.
 - `RestaurantCandidate`: canonical Google Place plus group-fit score.
 - `AvailabilityEvidence`: reservation/waitlist result, source URL, and
   checked timestamp for each candidate/date/time combination.

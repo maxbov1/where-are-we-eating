@@ -22,6 +22,7 @@ _DETAILS_FIELD_MASK = (
     "websiteUri,rating,priceLevel,businessStatus,regularOpeningHours"
     ",reservable"
 )
+_LOCATION_DETAILS_FIELD_MASK = "id,displayName,formattedAddress,location,types"
 
 _BOOKING_WORDS = re.compile(r"reserve|reservation|book[- ]?a[- ]?table|book[- ]?now|resy|opentable|tock", re.I)
 
@@ -110,6 +111,67 @@ def search_places(api_key: str, query: str, max_results: int = 5) -> list[dict]:
         }
         for place in response.json().get("places", [])
     ]
+
+
+def autocomplete_locations(
+    api_key: str,
+    query: str,
+    *,
+    session_token: str | None = None,
+    cities_only: bool = False,
+    max_results: int = 5,
+) -> list[dict]:
+    """Return Google Places predictions for city or guest-origin selection."""
+    body: dict[str, object] = {"input": query, "includeQueryPredictions": False}
+    if cities_only:
+        body["includedPrimaryTypes"] = ["(cities)"]
+    if session_token:
+        body["sessionToken"] = session_token
+    response = httpx.post(
+        f"{_BASE_URL}/places:autocomplete",
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat",
+        },
+        json=body,
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    predictions = []
+    for suggestion in response.json().get("suggestions", [])[:max_results]:
+        prediction = suggestion.get("placePrediction", {})
+        if prediction.get("placeId"):
+            predictions.append({
+                "place_id": prediction["placeId"],
+                "text": prediction.get("text", {}).get("text", ""),
+                "main_text": prediction.get("structuredFormat", {}).get("mainText", {}).get("text", ""),
+                "secondary_text": prediction.get("structuredFormat", {}).get("secondaryText", {}).get("text", ""),
+            })
+    return predictions
+
+
+def get_location_details(api_key: str, place_id: str, *, session_token: str | None = None) -> dict:
+    """Return canonical label and coordinates for a selected location."""
+    response = httpx.get(
+        f"{_BASE_URL}/places/{place_id}",
+        headers={"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": _LOCATION_DETAILS_FIELD_MASK},
+        params={"sessionToken": session_token} if session_token else None,
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    location = data.get("location") or {}
+    return {
+        "place_id": data.get("id", place_id),
+        # Keep the user-facing/stored label coarse; do not persist a full
+        # formatted street address for an optional guest origin.
+        "label": data.get("displayName", {}).get("text", "") or data.get("formattedAddress", ""),
+        "name": data.get("displayName", {}).get("text", ""),
+        "latitude": location.get("latitude"),
+        "longitude": location.get("longitude"),
+        "types": data.get("types", []),
+    }
 
 
 def get_place(api_key: str, place_id: str) -> tuple[Place, dict]:

@@ -320,6 +320,18 @@ the public survey shell, `POST /api/surveys/{public_token}/responses` for
 guest answers, and `GET /api/surveys/{survey_id}/aggregate` for cleaned agent
 context. Guests receive a temporary user row with no email or account
 credentials. Their token is hashed, and each response is stored independently.
+`/api/locations/autocomplete` and `/api/locations/details` proxy Google Places
+Autocomplete (New) and Place Details (New). Organizer locations are city-only;
+guests may optionally select a neighborhood, landmark, ZIP code, or nearby
+place. The guest origin stores a selected Place ID and coordinates, not a raw
+home address, and is intended for private group travel-fairness ranking.
+The default guest survey uses explicit per-person budget bands and a stepped
+restaurant search radius from 1 to 30+ miles around the meetup location. The
+radius is a search boundary, not a claim about where guests live; the 30+
+endpoint keeps the question useful for groups spread across a metro area.
+The organizer location field has browser-native validation and suggestions;
+authoritative Google Places location normalization remains a future provider
+seam.
 The API mints links from `PUBLIC_APP_URL`; set that value to the deployed web
 app origin when hosting outside localhost.
 

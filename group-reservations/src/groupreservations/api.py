@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .opentable_mcp import run
 from .auth import verify_access_token
+from .adapters.google_places import autocomplete_locations, get_location_details
 from .database import aggregate_survey, append_response, create_survey, create_user, get_survey, init_db
 from .config import settings
 
@@ -32,6 +33,10 @@ class GuestResponse(BaseModel):
     distance: str | None = None
     vibe: str | None = None
     price: str | None = None
+    origin_place_id: str | None = None
+    origin_label: str | None = None
+    origin_lat: float | None = None
+    origin_lng: float | None = None
 
 
 class RecommendationRequest(BaseModel):
@@ -57,6 +62,9 @@ class SurveyRequest(BaseModel):
     dates: list[str] = Field(min_length=1, max_length=3)
     times: list[str] = Field(min_length=1, max_length=3)
     questions: dict[str, list[str]] = Field(default_factory=dict)
+    location_place_id: str | None = Field(default=None, max_length=200)
+    location_lat: float | None = Field(default=None, ge=-90, le=90)
+    location_lng: float | None = Field(default=None, ge=-180, le=180)
 
 
 class SurveyResponseRequest(BaseModel):
@@ -68,11 +76,46 @@ class SurveyResponseRequest(BaseModel):
     distance: str | None = None
     vibe: str | None = Field(default=None, min_length=1, max_length=40)
     price: str | None = Field(default=None, min_length=1, max_length=100)
+    origin_place_id: str | None = Field(default=None, max_length=200)
+    origin_label: str | None = Field(default=None, min_length=2, max_length=160)
+    origin_lat: float | None = Field(default=None, ge=-90, le=90)
+    origin_lng: float | None = Field(default=None, ge=-180, le=180)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/locations/autocomplete")
+def locations_autocomplete(
+    input: str = Query(min_length=2, max_length=120),
+    session_token: str | None = Query(default=None, max_length=200),
+    cities_only: bool = False,
+) -> dict[str, object]:
+    """Proxy Google location predictions without exposing the Places key."""
+    if not settings.google_places_api_key:
+        raise HTTPException(status_code=503, detail="Google Places is not configured")
+    try:
+        return {"predictions": autocomplete_locations(settings.google_places_api_key, input, session_token=session_token, cities_only=cities_only)}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Google Places location lookup failed") from exc
+
+
+class LocationDetailsRequest(BaseModel):
+    place_id: str = Field(min_length=1, max_length=200)
+    session_token: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/locations/details")
+def locations_details(payload: LocationDetailsRequest) -> dict[str, object]:
+    """Resolve a selected prediction into a canonical label and coordinates."""
+    if not settings.google_places_api_key:
+        raise HTTPException(status_code=503, detail="Google Places is not configured")
+    try:
+        return get_location_details(settings.google_places_api_key, payload.place_id, session_token=payload.session_token)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Google Places location details failed") from exc
 
 
 @app.post("/api/users")
@@ -125,6 +168,10 @@ def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[s
                 "vibe": [payload.vibe] if payload.vibe else [],
                 "price": [payload.price] if payload.price else [],
             },
+            origin_place_id=payload.origin_place_id,
+            origin_label=payload.origin_label,
+            origin_lat=payload.origin_lat,
+            origin_lng=payload.origin_lng,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -137,6 +184,11 @@ def survey_aggregate(survey_id: str) -> dict[str, object]:
     result = aggregate_survey(survey_id)
     if not result:
         raise HTTPException(status_code=404, detail="Survey not found")
+    # Guest origins are private inputs for the recommendation run, not part of
+    # the public aggregate inspection endpoint.
+    private_fields = {"origin_place_id", "origin_label", "origin_lat", "origin_lng"}
+    result["responses"] = [{key: value for key, value in response.items() if key not in private_fields} for response in result.get("responses", [])]
+    result["report"]["responses"] = [{key: value for key, value in response.items() if key not in private_fields} for response in result["report"].get("responses", [])]
     return result
 
 
@@ -216,6 +268,8 @@ def _payload_from_aggregate(result: dict[str, object]) -> RecommendationRequest:
             cuisines=response.get("cuisine", []), dietary=response.get("dietary", []),
             distance=(response.get("distance") or [None])[0],
             vibe=(response.get("vibe") or [None])[0], price=(response.get("price") or [None])[0],
+            origin_place_id=response.get("origin_place_id"), origin_label=response.get("origin_label"),
+            origin_lat=response.get("origin_lat"), origin_lng=response.get("origin_lng"),
         ) for response in responses],
     )
 

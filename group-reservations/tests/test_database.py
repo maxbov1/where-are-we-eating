@@ -41,6 +41,24 @@ def test_same_guest_updates_one_response(tmp_path):
     assert stored["preference_summary"]["cuisine"] == {"Japanese": 1}
 
 
+def test_guest_origin_is_persisted_for_private_recommendation_context(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("origin-organizer@example.com", "cognito-origin")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Francisco", ["2026-09-04"], ["19:00"],
+        {"distance": ["5", "10"]},
+    )
+    database.append_response(
+        survey["public_token"], "origin-guest-token", ["2026-09-04"], ["19:00"],
+        {"distance": ["10"]}, "place-123", "Mission District", 37.7599, -122.4148,
+    )
+    stored = database.aggregate_survey(survey["id"])
+    response = stored["report"]["responses"][0]
+    assert response["origin_place_id"] == "place-123"
+    assert response["origin_label"] == "Mission District"
+    assert response["origin_lat"] == 37.7599
+
+
 def test_created_survey_is_publicly_readable_with_normalized_options(tmp_path):
     object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
     organizer = database.create_user("organizer@example.com", "cognito-sub-3")
