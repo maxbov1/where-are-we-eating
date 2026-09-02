@@ -57,6 +57,7 @@ def test_guest_origin_is_persisted_for_private_recommendation_context(tmp_path):
     assert response["origin_place_id"] == "place-123"
     assert response["origin_label"] == "Mission District"
     assert response["origin_lat"] == 37.7599
+    assert stored["preference_summary"]["distance"] == {"10": 1}
 
 
 def test_created_survey_is_publicly_readable_with_normalized_options(tmp_path):
@@ -99,3 +100,19 @@ def test_aggregate_exposes_all_tied_date_time_pairs(tmp_path):
     assert {(pair["date"], pair["time"]) for pair in pairs} == {
         ("2026-09-04", "18:00"), ("2026-09-11", "19:00")
     }
+
+
+def test_date_specific_time_slots_do_not_create_invalid_pairs(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("schedule-organizer@example.com", "cognito-schedule")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04", "2026-09-11"], ["18:00", "20:00"], {},
+        availability={"2026-09-04": ["18:00"], "2026-09-11": ["20:00"]},
+    )
+    database.append_response(
+        survey["public_token"], "schedule-guest-token", ["2026-09-04", "2026-09-11"], ["18:00", "20:00"], {},
+        availability={"2026-09-04": ["18:00"], "2026-09-11": ["20:00"]},
+    )
+    stored = database.aggregate_survey(survey["id"])
+    pairs = {(pair["date"], pair["time"]) for pair in stored["report"]["schedule"]["pair_leaders"]}
+    assert pairs == {("2026-09-04", "18:00"), ("2026-09-11", "20:00")}

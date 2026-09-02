@@ -42,6 +42,7 @@ def init_db() -> None:
           id TEXT PRIMARY KEY, organizer_id TEXT NOT NULL REFERENCES users(id),
           public_token TEXT NOT NULL UNIQUE, event_name TEXT NOT NULL,
           location TEXT NOT NULL, dates_json TEXT NOT NULL, times_json TEXT NOT NULL,
+          availability_json TEXT NOT NULL DEFAULT '{}',
           questions_json TEXT NOT NULL DEFAULT '{}', location_place_id TEXT,
           location_lat REAL, location_lng REAL, created_at TEXT NOT NULL
         );
@@ -59,7 +60,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS survey_responses (
           id TEXT PRIMARY KEY, survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
           respondent_user_id TEXT NOT NULL REFERENCES users(id), dates_json TEXT NOT NULL DEFAULT '[]',
-          times_json TEXT NOT NULL DEFAULT '[]', submitted_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          times_json TEXT NOT NULL DEFAULT '[]', availability_json TEXT NOT NULL DEFAULT '{}', submitted_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           origin_place_id TEXT, origin_label TEXT, origin_lat REAL, origin_lng REAL,
           UNIQUE(survey_id, respondent_user_id)
         );
@@ -77,6 +78,8 @@ def init_db() -> None:
         if "guest_token_hash" not in columns:
             db.execute("ALTER TABLE users ADD COLUMN guest_token_hash TEXT")
         survey_columns = {row["name"] for row in db.execute("PRAGMA table_info(surveys)")}
+        if "availability_json" not in survey_columns:
+            db.execute("ALTER TABLE surveys ADD COLUMN availability_json TEXT NOT NULL DEFAULT '{}'")
         if "questions_json" not in survey_columns:
             db.execute("ALTER TABLE surveys ADD COLUMN questions_json TEXT NOT NULL DEFAULT '{}'")
         for column, definition in (("location_place_id", "TEXT"), ("location_lat", "REAL"), ("location_lng", "REAL")):
@@ -87,6 +90,8 @@ def init_db() -> None:
             db.execute("ALTER TABLE survey_responses ADD COLUMN dates_json TEXT NOT NULL DEFAULT '[]'")
         if "times_json" not in response_columns:
             db.execute("ALTER TABLE survey_responses ADD COLUMN times_json TEXT NOT NULL DEFAULT '[]'")
+        if "availability_json" not in response_columns:
+            db.execute("ALTER TABLE survey_responses ADD COLUMN availability_json TEXT NOT NULL DEFAULT '{}'")
         for column, definition in (("origin_place_id", "TEXT"), ("origin_label", "TEXT"), ("origin_lat", "REAL"), ("origin_lng", "REAL")):
             if column not in response_columns:
                 db.execute(f"ALTER TABLE survey_responses ADD COLUMN {column} {definition}")
@@ -137,11 +142,20 @@ def _insert_questions(db: sqlite3.Connection, survey_id: str, questions: dict[st
             db.execute("INSERT INTO survey_options (id,question_id,value,label,sort_order) VALUES (?,?,?,?,?)", (secrets.token_urlsafe(12), qid, value, value, option_order))
 
 
-def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None) -> dict[str, Any]:
+def _normalize_availability(dates: list[str], times: list[str], availability: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    if availability:
+        return {date: list(dict.fromkeys(slots)) for date, slots in availability.items() if date and slots}
+    return {date: list(times) for date in dates}
+
+
+def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None, availability: dict[str, list[str]] | None = None) -> dict[str, Any]:
     init_db()
-    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "questions": questions, "responses": [], "created_at": _now()}
+    availability = _normalize_availability(dates, times, availability)
+    dates = list(availability)
+    times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
+    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": _now()}
     with _connect() as db:
-        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,questions_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(questions), survey["created_at"]))
+        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), survey["created_at"]))
         _insert_questions(db, survey["id"], questions)
     return survey
 
@@ -155,10 +169,13 @@ def _question_map(db: sqlite3.Connection, survey_id: str) -> dict[str, tuple[str
 
 
 def _responses(db: sqlite3.Connection, survey_id: str) -> list[dict[str, Any]]:
-    rows = db.execute("SELECT r.id,r.respondent_user_id,r.dates_json,r.times_json,r.origin_place_id,r.origin_label,r.origin_lat,r.origin_lng,q.question_key,o.value FROM survey_responses r LEFT JOIN response_answers a ON a.response_id=r.id LEFT JOIN survey_questions q ON q.id=a.question_id LEFT JOIN survey_options o ON o.id=a.option_id WHERE r.survey_id=? ORDER BY r.submitted_at", (survey_id,)).fetchall()
+    rows = db.execute("SELECT r.id,r.respondent_user_id,r.dates_json,r.times_json,r.availability_json,r.origin_place_id,r.origin_label,r.origin_lat,r.origin_lng,q.question_key,o.value FROM survey_responses r LEFT JOIN response_answers a ON a.response_id=r.id LEFT JOIN survey_questions q ON q.id=a.question_id LEFT JOIN survey_options o ON o.id=a.option_id WHERE r.survey_id=? ORDER BY r.submitted_at", (survey_id,)).fetchall()
     result: dict[str, dict[str, Any]] = {}
     for row in rows:
-        response = result.setdefault(row["id"], {"response_id": row["id"], "respondent_user_id": row["respondent_user_id"], "dates": json.loads(row["dates_json"]), "times": json.loads(row["times_json"]), "origin_place_id": row["origin_place_id"], "origin_label": row["origin_label"], "origin_lat": row["origin_lat"], "origin_lng": row["origin_lng"]})
+        dates = json.loads(row["dates_json"])
+        times = json.loads(row["times_json"])
+        availability = json.loads(row["availability_json"] or "{}")
+        response = result.setdefault(row["id"], {"response_id": row["id"], "respondent_user_id": row["respondent_user_id"], "dates": dates, "times": times, "availability": availability or {date: list(times) for date in dates}, "origin_place_id": row["origin_place_id"], "origin_label": row["origin_label"], "origin_lat": row["origin_lat"], "origin_lng": row["origin_lng"]})
         if row["question_key"] and row["value"]:
             response.setdefault(row["question_key"], []).append(row["value"])
     return list(result.values())
@@ -171,14 +188,19 @@ def get_survey(identifier: str) -> dict[str, Any] | None:
         if not row:
             return None
         survey = dict(row)
-        survey["dates"] = json.loads(survey.pop("dates_json")); survey["times"] = json.loads(survey.pop("times_json")); survey.pop("questions_json", None)
+        dates = json.loads(survey.pop("dates_json")); times = json.loads(survey.pop("times_json")); availability = json.loads(survey.pop("availability_json", "{}") or "{}")
+        survey["availability"] = availability or {date: list(times) for date in dates}
+        survey["dates"] = list(survey["availability"]); survey["times"] = list(dict.fromkeys(time for slots in survey["availability"].values() for time in slots)); survey.pop("questions_json", None)
         survey["questions"] = {key: list(options) for key, (_, options) in _question_map(db, survey["id"]).items()}
         survey["responses"] = _responses(db, survey["id"])
         return survey
 
 
-def append_response(public_token: str, guest_token: str, dates: list[str], times: list[str], answers: dict[str, list[str]], origin_place_id: str | None = None, origin_label: str | None = None, origin_lat: float | None = None, origin_lng: float | None = None) -> dict[str, Any]:
+def append_response(public_token: str, guest_token: str, dates: list[str], times: list[str], answers: dict[str, list[str]], origin_place_id: str | None = None, origin_label: str | None = None, origin_lat: float | None = None, origin_lng: float | None = None, availability: dict[str, list[str]] | None = None) -> dict[str, Any]:
     init_db(); token_hash = _hash_token(guest_token)
+    availability = _normalize_availability(dates, times, availability)
+    dates = list(availability)
+    times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
     with _connect() as db:
         survey = db.execute("SELECT id FROM surveys WHERE public_token=?", (public_token,)).fetchone()
         if not survey:
@@ -190,7 +212,7 @@ def append_response(public_token: str, guest_token: str, dates: list[str], times
             guest_id = secrets.token_urlsafe(12)
             db.execute("INSERT INTO users (id,guest_token_hash,is_temporary,created_at) VALUES (?,?,1,?)", (guest_id, token_hash, _now()))
         now = _now(); response_id = secrets.token_urlsafe(12)
-        db.execute("INSERT INTO survey_responses (id,survey_id,respondent_user_id,dates_json,times_json,origin_place_id,origin_label,origin_lat,origin_lng,submitted_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(survey_id,respondent_user_id) DO UPDATE SET dates_json=excluded.dates_json,times_json=excluded.times_json,origin_place_id=excluded.origin_place_id,origin_label=excluded.origin_label,origin_lat=excluded.origin_lat,origin_lng=excluded.origin_lng,updated_at=excluded.updated_at", (response_id, survey["id"], guest_id, json.dumps(dates), json.dumps(times), origin_place_id, origin_label, origin_lat, origin_lng, now, now))
+        db.execute("INSERT INTO survey_responses (id,survey_id,respondent_user_id,dates_json,times_json,availability_json,origin_place_id,origin_label,origin_lat,origin_lng,submitted_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(survey_id,respondent_user_id) DO UPDATE SET dates_json=excluded.dates_json,times_json=excluded.times_json,availability_json=excluded.availability_json,origin_place_id=excluded.origin_place_id,origin_label=excluded.origin_label,origin_lat=excluded.origin_lat,origin_lng=excluded.origin_lng,updated_at=excluded.updated_at", (response_id, survey["id"], guest_id, json.dumps(dates), json.dumps(times), json.dumps(availability), origin_place_id, origin_label, origin_lat, origin_lng, now, now))
         response = db.execute("SELECT id FROM survey_responses WHERE survey_id=? AND respondent_user_id=?", (survey["id"], guest_id)).fetchone()
         db.execute("DELETE FROM response_answers WHERE response_id=?", (response["id"],))
         question_map = _question_map(db, survey["id"])
@@ -201,7 +223,7 @@ def append_response(public_token: str, guest_token: str, dates: list[str], times
             for value in values:
                 if value in options:
                     db.execute("INSERT INTO response_answers (response_id,question_id,option_id) VALUES (?,?,?)", (response["id"], qid, options[value]))
-        return {"response_id": response["id"], "respondent_user_id": guest_id, "dates": dates, "times": times, "origin_place_id": origin_place_id, "origin_label": origin_label, "origin_lat": origin_lat, "origin_lng": origin_lng, **{key: values for key, values in answers.items() if key in question_map}}
+        return {"response_id": response["id"], "respondent_user_id": guest_id, "dates": dates, "times": times, "availability": availability, "origin_place_id": origin_place_id, "origin_label": origin_label, "origin_lat": origin_lat, "origin_lng": origin_lng, **{key: values for key, values in answers.items() if key in question_map}}
 
 
 def aggregate_survey(identifier: str) -> dict[str, Any] | None:
@@ -210,8 +232,11 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
         return None
     summary: dict[str, dict[str, int]] = {}
     for response in survey["responses"]:
-        for key, values in response.items():
-            if key in {"response_id", "respondent_user_id"}:
+        # Only these fields are user answers. Keep response metadata, including
+        # numeric origin coordinates, outside the vote-counting boundary.
+        for key in ("dates", "times", *survey["questions"]):
+            values = response.get(key, [])
+            if not isinstance(values, list):
                 continue
             bucket = summary.setdefault(key, {})
             for value in values:
@@ -248,12 +273,12 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
             "date": date,
             "time": time,
             "votes": sum(
-                date in response.get("dates", []) and time in response.get("times", [])
+                time in response.get("availability", {}).get(date, [])
                 for response in survey["responses"]
             ),
         }
-        for date in survey["dates"]
-        for time in survey["times"]
+        for date, slots in survey["availability"].items()
+        for time in slots
     ]
     pair_top = max((pair["votes"] for pair in pair_counts), default=0)
     pair_leaders = [pair for pair in pair_counts if pair["votes"] == pair_top]
@@ -262,10 +287,10 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
         "event": {"name": survey["event_name"], "location": survey["location"]},
         "response_count": len(survey["responses"]),
         "active_questions": list(survey["questions"]),
-        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "pair_leaders": pair_leaders, "date_consensus": consensus("dates"), "time_consensus": consensus("times")},
+        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "times_by_date": survey["availability"], "pair_leaders": pair_leaders, "date_consensus": consensus("dates"), "time_consensus": consensus("times")},
         "preferences": {key: {"leaders": leaders(key), "consensus": consensus(key), "votes": values} for key, values in summary.items() if key not in {"dates", "times"}},
         "preference_summary": summary,
         "confidence": confidence,
         "responses": [{key: value for key, value in response.items() if key not in {"respondent_user_id", "response_id"}} for response in survey["responses"]],
     }
-    return {"survey_id": survey["id"], "event_name": survey["event_name"], "location": survey["location"], "dates": survey["dates"], "times": survey["times"], "questions": survey["questions"], "response_count": len(survey["responses"]), "preference_summary": summary, "confidence": confidence, "report": report, "responses": report["responses"]}
+    return {"survey_id": survey["id"], "event_name": survey["event_name"], "location": survey["location"], "dates": survey["dates"], "times": survey["times"], "availability": survey["availability"], "questions": survey["questions"], "response_count": len(survey["responses"]), "preference_summary": summary, "confidence": confidence, "report": report, "responses": report["responses"]}

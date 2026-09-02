@@ -36,15 +36,8 @@
               <h2>Where at?</h2>
               <label>Event name <input required id="event-name" value="Friday dinner" /></label>
               <label>City <div class="location-picker"><input required minlength="2" maxlength="160" pattern="[A-Za-z0-9][A-Za-z0-9 .,'-]{1,158}" autocomplete="address-level2" id="event-location" value="San Francisco" /><div class="location-menu hidden" id="organizer-location-menu" role="listbox"></div></div><span class="label-note">Choose a city. This becomes the broad restaurant search area.</span></label>
-              <div class="field-label">Pick up to 3 dates</div>
-              <div class="date-grid"><input required type="date" id="date-1" /><input type="date" id="date-2" /><input type="date" id="date-3" /></div>
-              <div class="field-label">Offer up to 3 time slots on each date</div>
-              <div class="time-editor" id="time-options">
-                <label class="time-row"><input required class="time-input" type="time" value="18:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>
-                <label class="time-row"><input required class="time-input" type="time" value="19:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>
-                <label class="time-row"><input required class="time-input" type="time" value="20:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>
-              </div>
-              <button class="add-time" id="add-time" type="button">+ Add another time</button>
+              <div class="field-label">Set the times for each date</div>
+              <div class="schedule-editor" id="schedule-editor"></div>
               <div class="field-label">What should everyone weigh in on?</div>
               <div class="topic-list" id="question-topics" aria-label="Survey topics"></div>
               <div class="question-drawer hidden" id="question-drawer" role="dialog" aria-modal="true" aria-labelledby="question-drawer-title">
@@ -95,8 +88,7 @@
             <div class="survey-progress"><span></span></div>
             <div class="survey-intro"><p class="eyebrow">A little help from the whole table</p><h1 id="survey-title">Help pick <em>Friday dinner.</em></h1><p id="survey-location">San Francisco · about 30 seconds · no sign-up</p></div>
             <form class="survey-form" id="survey-form">
-              <fieldset><legend>When works?</legend><p class="question-help">Pick every day that works.</p><div class="survey-choices" id="survey-dates"></div></fieldset>
-              <fieldset><legend>What time works?</legend><p class="question-help">Pick every time you could make it.</p><div class="survey-choices" id="survey-times"></div></fieldset>
+              <fieldset><legend>When works?</legend><p class="question-help">Pick the dates and times that work for you. Each day can have different time options.</p><div class="schedule-choices" id="survey-schedule"></div></fieldset>
               <fieldset><legend>Where are you coming from?</legend><p class="question-help">Optional. Choose a neighborhood, landmark, ZIP code, or nearby place. We use it privately to balance travel for the group—no exact home address needed.</p><div class="location-picker"><input id="guest-origin" minlength="2" maxlength="160" autocomplete="street-address" placeholder="e.g. Mission District or SFO" /><div class="location-menu hidden" id="guest-origin-menu" role="listbox"></div></div></fieldset>
               <div id="survey-question-fields"></div>
               <button class="button primary full" type="submit">Send my picks <span>→</span></button>

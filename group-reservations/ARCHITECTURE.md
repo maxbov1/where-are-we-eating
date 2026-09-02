@@ -89,7 +89,9 @@ availability is returned as unknown with the failure recorded.
 ## Domain objects
 
 - `Event`: organizer, title, status, response URL/token, survey, candidate
-  dates, and candidate time slots.
+  dates, and a date-to-time availability map. A time slot belongs only to the
+  date where the organizer configured it; the aggregate must not create a
+  cross-product of every date and every time.
 - `SurveyQuestion`: stable key, prompt, answer type, options, and active state.
 - `GuestResponse`: event, opaque respondent token, structured answers,
   submitted timestamp, and revision timestamp.
@@ -113,7 +115,7 @@ availability is returned as unknown with the failure recorded.
 ```text
 survey answers
     -> validate and aggregate preferences
-    -> select feasible date/time windows
+    -> select feasible date/time windows from the date-specific availability map
     -> search and hydrate restaurant candidates
     -> check reservation evidence for feasible windows
     -> deterministic scoring

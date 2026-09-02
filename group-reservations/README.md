@@ -37,7 +37,7 @@ PostgreSQL, and SMS delivery. See [POC_PLAN.md](POC_PLAN.md).
 
 1. The signed-in organizer creates an event.
 2. They customize a short, button/slider/select-only survey.
-3. They choose up to three candidate dates and three time slots per date.
+3. They choose up to three candidate dates, with up to three time slots configured independently for each date.
 4. The app generates a public response URL suitable for SMS.
 5. Guests respond without creating accounts.
 6. The agent aggregates preferences, searches candidate restaurants, and

@@ -28,6 +28,7 @@ init_db()
 class GuestResponse(BaseModel):
     dates: list[str] = Field(min_length=1, max_length=3)
     times: list[str] = Field(min_length=1, max_length=3)
+    availability: dict[str, list[str]] = Field(default_factory=dict)
     cuisines: list[str] = Field(default_factory=list, max_length=2)
     dietary: list[str] = Field(default_factory=list, max_length=10)
     distance: str | None = None
@@ -45,6 +46,7 @@ class RecommendationRequest(BaseModel):
     location: str = Field(min_length=1, max_length=160)
     dates: list[str] = Field(min_length=1, max_length=3)
     times: list[str] = Field(min_length=1, max_length=3)
+    availability: dict[str, list[str]] = Field(default_factory=dict)
     responses: list[GuestResponse] = Field(max_length=500)
     questions: dict[str, list[str]] = Field(default_factory=dict)
     report: dict[str, object] = Field(default_factory=dict)
@@ -61,6 +63,7 @@ class SurveyRequest(BaseModel):
     location: str = Field(min_length=1, max_length=160)
     dates: list[str] = Field(min_length=1, max_length=3)
     times: list[str] = Field(min_length=1, max_length=3)
+    availability: dict[str, list[str]] = Field(default_factory=dict)
     questions: dict[str, list[str]] = Field(default_factory=dict)
     location_place_id: str | None = Field(default=None, max_length=200)
     location_lat: float | None = Field(default=None, ge=-90, le=90)
@@ -71,6 +74,7 @@ class SurveyResponseRequest(BaseModel):
     respondent_token: str = Field(min_length=8, max_length=120)
     dates: list[str] = Field(min_length=1, max_length=3)
     times: list[str] = Field(min_length=1, max_length=3)
+    availability: dict[str, list[str]] = Field(default_factory=dict)
     cuisines: list[str] = Field(default_factory=list, max_length=2)
     dietary: list[str] = Field(default_factory=list, max_length=10)
     distance: str | None = None
@@ -134,7 +138,10 @@ def users(
 @app.post("/api/surveys")
 def surveys(payload: SurveyRequest) -> dict[str, object]:
     """Persist an organizer survey and return its public token."""
-    survey = create_survey(**payload.model_dump())
+    data = payload.model_dump()
+    if not data["availability"]:
+        data["availability"] = {date: list(data["times"]) for date in data["dates"]}
+    survey = create_survey(**data)
     share_url = f"{settings.public_app_url.rstrip('/')}/?survey={survey['public_token']}"
     return {
         "id": survey["id"],
@@ -150,7 +157,7 @@ def survey(public_token: str) -> dict[str, object]:
     record = get_survey(public_token)
     if not record:
         raise HTTPException(status_code=404, detail="Survey not found")
-    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "questions")}
+    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions")}
 
 # records a guest's response to the survey
 @app.post("/api/surveys/{public_token}/responses")
@@ -161,6 +168,7 @@ def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[s
             public_token,
             guest_token=payload.respondent_token,
             dates=payload.dates, times=payload.times,
+            availability=payload.availability,
             answers={
                 "cuisine": payload.cuisines,
                 "dietary": payload.dietary,
@@ -197,6 +205,7 @@ def _agent_prompt(payload: RecommendationRequest) -> str:
         "event": {"name": payload.event_name, "location": payload.location},
         "response_count": len(payload.responses),
         "active_questions": list(payload.questions),
+        "schedule": {"times_by_date": payload.availability},
         "responses": [response.model_dump(exclude_none=True) for response in payload.responses],
     }
     return f"""Select the best restaurant options for this group event.
@@ -205,7 +214,8 @@ Authoritative cleaned group report:
 {json.dumps(report, indent=2)}
 
 Treat this report as authoritative. Do not recalculate votes or use disabled
-options. When the report contains ties, still choose a concrete date, time,
+options. Treat schedule.times_by_date as authoritative: a time is valid only
+for the date where it is listed. When the report contains ties, still choose a concrete date, time,
 and restaurant. Use this tie-break order: (1) maximize the number of guests
 who can attend the date/time pair using schedule.pair_leaders, (2) prefer the
 pair with the strongest restaurant availability and preference fit, (3) prefer
@@ -261,10 +271,12 @@ def _payload_from_aggregate(result: dict[str, object]) -> RecommendationRequest:
         survey_id=str(result["survey_id"]),
         event_name=str(result["event_name"]), location=str(result["location"]),
         dates=list(result["dates"]), times=list(result["times"]),
+        availability=dict(result.get("availability", {})),
         questions=dict(result["questions"]),
         report=dict(result.get("report", {})),
         responses=[GuestResponse(
             dates=response.get("dates", []), times=response.get("times", []),
+            availability=response.get("availability", {}),
             cuisines=response.get("cuisine", []), dietary=response.get("dietary", []),
             distance=(response.get("distance") or [None])[0],
             vibe=(response.get("vibe") or [None])[0], price=(response.get("price") or [None])[0],
