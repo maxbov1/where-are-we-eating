@@ -38,6 +38,15 @@
               <label>City <div class="location-picker"><input required minlength="2" maxlength="160" pattern="[A-Za-z0-9][A-Za-z0-9 .,'-]{1,158}" autocomplete="address-level2" id="event-location" value="San Francisco" /><div class="location-menu hidden" id="organizer-location-menu" role="listbox"></div></div><span class="label-note">Choose a city. This becomes the broad restaurant search area.</span></label>
               <div class="field-label">Set the times for each date</div>
               <div class="schedule-editor" id="schedule-editor"></div>
+              <label>Close responses after
+                <select id="event-expiry">
+                  <option value="2">2 days (default)</option>
+                  <option value="3">3 days</option>
+                  <option value="7">1 week</option>
+                  <option value="14">2 weeks</option>
+                </select>
+                <span class="label-note">Guests can’t respond after this. You can still view results.</span>
+              </label>
               <div class="field-label">What should everyone weigh in on?</div>
               <div class="topic-list" id="question-topics" aria-label="Survey topics"></div>
               <div class="question-drawer hidden" id="question-drawer" role="dialog" aria-modal="true" aria-labelledby="question-drawer-title">
@@ -61,6 +70,7 @@
               <div class="card-kicker">Your invitation is ready</div>
               <h2 id="share-title">Now bring everyone in.</h2>
               <p class="modal-intro">Drop this into the group chat. Everyone can choose what works without making an account.</p>
+              <p class="fine-print" id="expiry-note"></p>
               <div class="share-tools">
                 <div class="qr-chip"><img id="qr-code" alt="QR code for the group survey" /><span>Scan to vote</span></div>
                 <div class="share-fields">
@@ -94,6 +104,7 @@
               <button class="button primary full" type="submit">Send my picks <span>→</span></button>
             </form>
             <div class="survey-thanks hidden" id="survey-thanks"><div class="thanks-mark">✓</div><p class="eyebrow">You're in</p><h1>Thanks for weighing in.</h1><p>The organizer will get the group’s best options soon.</p><button class="button ghost" id="back-organizer" type="button">Back to organizer view</button></div>
+            <div class="survey-thanks hidden" id="survey-closed"><div class="thanks-mark">⌛</div><p class="eyebrow">This survey is closed</p><h1>Voting has wrapped up.</h1><p>The organizer isn’t accepting new responses for this event.</p></div>
           </div>
         </section>
       </main>
