@@ -12,14 +12,12 @@ from typing import Any
 from .config import settings
 from .scoring import score_confidence
 
-# Surveys stop accepting guest responses this long after they are created,
-# unless the organizer passes an explicit expires_at. Organizer aggregation and
-# recommendation runs keep working after this point.
+""" Default time for survey expiration if not specified. """
 DEFAULT_SURVEY_TTL = timedelta(days=2)
 
 
 class SurveyClosed(Exception):
-    """Raised when a guest response arrives after the survey's expires_at."""
+    """Raised when the response of the survey arrives after expires_at."""
 
 
 def _now() -> str:

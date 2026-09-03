@@ -78,7 +78,7 @@ class SurveyRequest(BaseModel):
     location_lat: float | None = Field(default=None, ge=-90, le=90)
     location_lng: float | None = Field(default=None, ge=-180, le=180)
     # Optional override; when omitted the survey closes to new responses two
-    # days after creation (see database.DEFAULT_SURVEY_TTL).
+    # days after creation
     expires_at: str | None = Field(default=None, max_length=40)
 
     @field_validator("expires_at")
