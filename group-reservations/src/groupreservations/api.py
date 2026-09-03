@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .opentable_mcp import run
 from .auth import verify_access_token
 from .adapters.google_places import autocomplete_locations, get_location_details
-from .database import aggregate_survey, append_response, create_survey, create_user, get_survey, init_db
+from .database import (
+    SurveyClosed,
+    aggregate_survey,
+    append_response,
+    create_survey,
+    create_user,
+    get_survey,
+    init_db,
+)
 from .config import settings
 
 app = FastAPI(title="Where Are We Eating? Agent API", version="0.1.0")
@@ -68,6 +77,20 @@ class SurveyRequest(BaseModel):
     location_place_id: str | None = Field(default=None, max_length=200)
     location_lat: float | None = Field(default=None, ge=-90, le=90)
     location_lng: float | None = Field(default=None, ge=-180, le=180)
+    # Optional override; when omitted the survey closes to new responses two
+    # days after creation (see database.DEFAULT_SURVEY_TTL).
+    expires_at: str | None = Field(default=None, max_length=40)
+
+    @field_validator("expires_at")
+    @classmethod
+    def _validate_expires_at(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("expires_at must be an ISO 8601 timestamp") from exc
+        return value
 
 
 class SurveyResponseRequest(BaseModel):
@@ -147,6 +170,7 @@ def surveys(payload: SurveyRequest) -> dict[str, object]:
         "id": survey["id"],
         "public_token": survey["public_token"],
         "share_url": share_url,
+        "expires_at": survey["expires_at"],
         "survey": survey,
     }
 
@@ -157,7 +181,7 @@ def survey(public_token: str) -> dict[str, object]:
     record = get_survey(public_token)
     if not record:
         raise HTTPException(status_code=404, detail="Survey not found")
-    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions")}
+    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions", "expires_at", "is_open")}
 
 # records a guest's response to the survey
 @app.post("/api/surveys/{public_token}/responses")
@@ -183,6 +207,8 @@ def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[s
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SurveyClosed as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
     return {"status": "ok", "response": response}
 
 

@@ -5,16 +5,37 @@ import hashlib
 import json
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .config import settings
 from .scoring import score_confidence
 
+# Surveys stop accepting guest responses this long after they are created,
+# unless the organizer passes an explicit expires_at. Organizer aggregation and
+# recommendation runs keep working after this point.
+DEFAULT_SURVEY_TTL = timedelta(days=2)
+
+
+class SurveyClosed(Exception):
+    """Raised when a guest response arrives after the survey's expires_at."""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_expired(expires_at: str | None, *, now: datetime | None = None) -> bool:
+    if not expires_at:
+        return False
+    try:
+        deadline = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return False
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) >= deadline
 
 
 def _connect() -> sqlite3.Connection:
@@ -44,7 +65,8 @@ def init_db() -> None:
           location TEXT NOT NULL, dates_json TEXT NOT NULL, times_json TEXT NOT NULL,
           availability_json TEXT NOT NULL DEFAULT '{}',
           questions_json TEXT NOT NULL DEFAULT '{}', location_place_id TEXT,
-          location_lat REAL, location_lng REAL, created_at TEXT NOT NULL
+          location_lat REAL, location_lng REAL, created_at TEXT NOT NULL,
+          expires_at TEXT
         );
         CREATE TABLE IF NOT EXISTS survey_questions (
           id TEXT PRIMARY KEY, survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
@@ -85,6 +107,8 @@ def init_db() -> None:
         for column, definition in (("location_place_id", "TEXT"), ("location_lat", "REAL"), ("location_lng", "REAL")):
             if column not in survey_columns:
                 db.execute(f"ALTER TABLE surveys ADD COLUMN {column} {definition}")
+        if "expires_at" not in survey_columns:
+            db.execute("ALTER TABLE surveys ADD COLUMN expires_at TEXT")
         response_columns = {row["name"] for row in db.execute("PRAGMA table_info(survey_responses)")}
         if "dates_json" not in response_columns:
             db.execute("ALTER TABLE survey_responses ADD COLUMN dates_json TEXT NOT NULL DEFAULT '[]'")
@@ -148,14 +172,17 @@ def _normalize_availability(dates: list[str], times: list[str], availability: di
     return {date: list(times) for date in dates}
 
 
-def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None, availability: dict[str, list[str]] | None = None) -> dict[str, Any]:
+def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None, availability: dict[str, list[str]] | None = None, expires_at: str | None = None) -> dict[str, Any]:
     init_db()
     availability = _normalize_availability(dates, times, availability)
     dates = list(availability)
     times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
-    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": _now()}
+    created_at = _now()
+    if not expires_at:
+        expires_at = (datetime.fromisoformat(created_at) + DEFAULT_SURVEY_TTL).isoformat()
+    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": created_at, "expires_at": expires_at, "is_open": not _is_expired(expires_at)}
     with _connect() as db:
-        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), survey["created_at"]))
+        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), created_at, expires_at))
         _insert_questions(db, survey["id"], questions)
     return survey
 
@@ -193,6 +220,7 @@ def get_survey(identifier: str) -> dict[str, Any] | None:
         survey["dates"] = list(survey["availability"]); survey["times"] = list(dict.fromkeys(time for slots in survey["availability"].values() for time in slots)); survey.pop("questions_json", None)
         survey["questions"] = {key: list(options) for key, (_, options) in _question_map(db, survey["id"]).items()}
         survey["responses"] = _responses(db, survey["id"])
+        survey["is_open"] = not _is_expired(survey.get("expires_at"))
         return survey
 
 
@@ -202,9 +230,11 @@ def append_response(public_token: str, guest_token: str, dates: list[str], times
     dates = list(availability)
     times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
     with _connect() as db:
-        survey = db.execute("SELECT id FROM surveys WHERE public_token=?", (public_token,)).fetchone()
+        survey = db.execute("SELECT id, expires_at FROM surveys WHERE public_token=?", (public_token,)).fetchone()
         if not survey:
             raise LookupError("Survey not found")
+        if _is_expired(survey["expires_at"]):
+            raise SurveyClosed("This survey is closed to new responses")
         guest = db.execute("SELECT id FROM users WHERE guest_token_hash=?", (token_hash,)).fetchone()
         if guest:
             guest_id = guest["id"]
