@@ -38,7 +38,11 @@ Remaining work is grouped into three tiers by difficulty:
 
 - [ ] Add organizer authorization checks for every survey-management route.
       Routes currently trust a browser-supplied `X-Organizer-Id` / body field.
-- [ ] Add survey expiration, revoke, and response export controls.
+- [ ] Add survey revoke and response export controls. Expiration is done:
+      surveys stop accepting guest responses two days after creation
+      (`surveys.expires_at`, overridable per survey). `append_response` raises
+      `SurveyClosed`, which the guest response route maps to HTTP 410; organizer
+      aggregation and recommendation runs are unaffected.
 - [ ] Add Playwright smoke coverage for organizer creation and guest voting.
 - [ ] Add retries and idempotency keys around provider calls and booking.
 - [ ] Persist recommendation runs, hydrated Places candidates, availability

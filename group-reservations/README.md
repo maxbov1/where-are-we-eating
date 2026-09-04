@@ -328,6 +328,11 @@ the public survey shell, `POST /api/surveys/{public_token}/responses` for
 guest answers, and `GET /api/surveys/{survey_id}/aggregate` for cleaned agent
 context. Guests receive a temporary user row with no email or account
 credentials. Their token is hashed, and each response is stored independently.
+Every survey carries an `expires_at` (two days after creation by default, or an
+explicit value on `POST /api/surveys`). Once it passes, the guest response
+route returns HTTP 410 and no new or updated answers are accepted;
+`GET /api/surveys/{public_token}` reports `expires_at` and `is_open`, while the
+aggregate and recommendation endpoints keep working for the organizer.
 `/api/locations/autocomplete` and `/api/locations/details` proxy Google Places
 Autocomplete (New) and Place Details (New). Organizer locations are city-only;
 guests may optionally select a neighborhood, landmark, ZIP code, or nearby
