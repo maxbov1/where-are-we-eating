@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from .opentable_mcp import run
 from .auth import verify_access_token
+from .agent_state import AgentState
 from .adapters.google_places import autocomplete_locations, get_location_details
 from .database import aggregate_survey, append_response, create_survey, create_user, get_survey, init_db
 from .config import settings
@@ -213,6 +214,10 @@ def _agent_prompt(payload: RecommendationRequest) -> str:
 Authoritative cleaned group report:
 {json.dumps(report, indent=2)}
 
+Survey evidence ID: {payload.survey_id or "unavailable"}. If any group
+context is missing, contradictory, or unclear during tool calls, use the
+survey_get_evidence tool with this ID before making a decision.
+
 Treat this report as authoritative. Do not recalculate votes or use disabled
 options. Treat schedule.times_by_date as authoritative: a time is valid only
 for the date where it is listed. When the report contains ties, still choose a concrete date, time,
@@ -241,7 +246,11 @@ Google Maps, restaurant website, and the generic booking link plus its
 provider. Prefer the restaurant website's explicit booking link; OpenTable is
 only one possible provider. Never fabricate a provider URL. A listing URL does
 not prove availability; report those as separate facts.
-Mention up to two alternatives briefly after the primary choice. End with this
+Format the answer compactly: no markdown tables, no duplicated decision
+summary, and no full response-by-response vote dump. Use this order: one-line
+confidence/tie note only when it affects the choice; primary recommendation
+with 3-5 key fit facts and exact links; up to two alternatives as one short
+paragraph each with the key tradeoff and booking link; then end with this
 confirmation request using the selected values and prepared booking URL:
 "Confirm reservation for your group of X at Y on DATE at TIME? [Confirm
 reservation](URL)". The link is a human confirmation handoff; never imply the
@@ -302,7 +311,13 @@ def recommendations(
         if not aggregate:
             raise HTTPException(status_code=404, detail="Survey not found")
         payload = _payload_from_aggregate(aggregate)
-    return {"status": "ok", "answer": run(_agent_prompt(payload), user_id=organizer_id)}
+    state = AgentState(
+        survey_id=payload.survey_id,
+        group_location=payload.location,
+    )
+    return {"status": "ok", "answer": run(
+        _agent_prompt(payload), user_id=organizer_id, state=state
+    )}
 
 
 @app.post("/api/surveys/{survey_id}/recommendations")

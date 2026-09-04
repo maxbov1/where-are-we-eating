@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 
 from groupreservations import database
+from groupreservations.evidence import get_survey_evidence
 
 
 def test_concurrent_guest_submissions_are_independent(tmp_path):
@@ -116,3 +117,23 @@ def test_date_specific_time_slots_do_not_create_invalid_pairs(tmp_path):
     stored = database.aggregate_survey(survey["id"])
     pairs = {(pair["date"], pair["time"]) for pair in stored["report"]["schedule"]["pair_leaders"]}
     assert pairs == {("2026-09-04", "18:00"), ("2026-09-11", "20:00")}
+
+
+def test_agent_evidence_tool_returns_summary_only_to_organizer(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("evidence@example.com", "cognito-evidence")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian"]},
+    )
+    database.append_response(
+        survey["public_token"], "evidence-guest-token", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian"]}, origin_label="Private address", origin_lat=1, origin_lng=2,
+    )
+
+    evidence = get_survey_evidence(survey["id"], organizer["id"])
+    assert evidence["success"] is True
+    assert evidence["schedule"]["times_by_date"] == {"2026-09-04": ["19:00"]}
+    assert evidence["preferences"]["cuisine"]["votes"] == {"Italian": 1}
+    assert "responses" not in evidence
+    assert get_survey_evidence(survey["id"], "another-organizer")["success"] is False

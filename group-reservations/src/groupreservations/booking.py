@@ -17,6 +17,7 @@ KNOWN_PROVIDERS = {
     "resy.com": "Resy",
     "exploretock.com": "Tock",
     "tockhq.com": "Tock",
+    "toasttab.com": "Toast",
 }
 
 

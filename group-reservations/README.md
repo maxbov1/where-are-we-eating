@@ -17,15 +17,13 @@ product:
 - Google Places discovers restaurants and hydrates canonical `Place` structs
   with addresses, ratings, links, hours, reservation support, and checked
   timestamps.
-- Strands orchestrates Google Places and the OpenTable MCP.
-- OpenTable is limited to availability checks and explicit booking actions.
+- Strands orchestrates Google Places and local browser reservation handoffs.
 - Exact Google Reserve and restaurant booking pages are inspected first when
   available.
-- OpenTable login is deferred until the organizer confirms a booking.
 - Organizers can configure guest-facing question options, currently including
   cuisine choices, without changing the survey code.
-- Organizer JWTs and isolated child-process `HOME` directories prevent
-  third-party session cookies from being shared between organizers.
+- Organizer JWTs and organizer-scoped browser sessions prevent reservation
+  session state from being shared between organizers.
 
 The local frontend now sends its structured survey payload to the agent API.
 SQLite mirrors the production model: Cognito-sub keyed organizers, hashed
@@ -68,9 +66,8 @@ PostgreSQL, and SMS delivery. See [POC_PLAN.md](POC_PLAN.md).
 
 ## Next three things
 
-1. Troubleshoot OpenTable MCP reliability: capture the failing request, fix
-   the upstream cleanup race, and determine whether OpenTable blocks the
-   browser session before treating live availability as production-ready.
+1. Harden browser handoffs across restaurant sites and add provider-specific
+   adapters only where reliable evidence is available.
 2. Replace free-form agent output with a versioned recommendation schema that
    carries restaurant evidence, booking provider URLs, availability status,
    and confidence without duplicating prose.
@@ -90,8 +87,8 @@ See [POC_PLAN.md](POC_PLAN.md) for the sprint plan and demo target.
 ## Quick Start
 
 The POC uses Google Places for restaurant discovery and canonical restaurant
-details. The community OpenTable MCP server is used only for availability checks
-and the explicit organizer-confirmed booking flow.
+details. Restaurant websites and verified provider URLs are inspected through
+the organizer-scoped browser handoff flow.
 
 ```bash
 python -m venv .venv
@@ -109,7 +106,6 @@ cp .env.example .env
 
 PYTHONPATH=src python -m groupreservations.opentable_mcp --check-config
 
-PYTHONPATH=src python -m groupreservations.opentable_mcp --list-tools
 PYTHONPATH=src python -m groupreservations.opentable_mcp \
   "Find three Italian restaurants for 4 people in San Francisco this Friday at 7 PM"
 
@@ -133,15 +129,12 @@ PYTHONPATH=src python scripts/run_fixture_flow.py
 
 The agent exposes `google_places_search` and `google_places_details` first.
 Search returns hydrated canonical restaurant structs from Google Places before
-any reservation checks. It then allowlists only the OpenTable tools needed for
-availability and booking:
-`opentable_status`, `opentable_login`, `opentable_search`,
-`opentable_get_restaurant`, `opentable_check_availability`, and
-`opentable_make_reservation`. Google Places remains the primary discovery
-source. When a restaurant exposes an exact Google Reserve or provider booking
-path, the agent uses that path first; otherwise OpenTable search must resolve a
-real record before availability is checked. Cancellation and
-reservation-history tools remain excluded.
+reservation checks. Restaurant websites and verified provider URLs are then
+inspected through local browser tools. Google Places remains the primary
+discovery source; the agent may verify availability by opening an exact
+embedded provider URL, filling date/time/party-size fields, and using a
+non-final availability control. Final booking confirmation remains organizer
+gated.
 
 ### Run the canned recommendation flow
 
@@ -169,7 +162,7 @@ curl -X POST http://127.0.0.1:8000/api/surveys/<survey_id>/recommendations \
 ```
 
 This uses the canned preferences, Google Places discovery, and the configured
-Bedrock model. OpenTable remains limited to availability and explicit booking.
+Bedrock model with local browser reservation handoffs.
 
 The one-command version creates a fresh fixture survey, prints the authoritative
 cleaned report, then sends that report to the agent:
@@ -181,25 +174,37 @@ PYTHONPATH=src python scripts/run_fixture_flow.py
 Use `--aggregate-only` to validate cleaning without calling AWS or provider
 tools.
 
+During orchestration, the agent also has a read-only `survey_get_evidence` tool.
+If context is missing or ambiguous while it is selecting a date, time, location,
+or preference, it can retrieve the organizer-scoped deterministic survey summary
+by ID and continue reasoning. Guest origin coordinates and raw responses are not
+returned by this fallback tool.
+
+Each invocation also has an explicit operational state exposed through
+`agent_get_state`. Browser observations return the same state plus
+`available_actions`, so the agent can recover from a failed scan or page
+transition by choosing a concrete next tool instead of relying on hidden page
+state. This is an action/state trace, not model chain-of-thought.
+
+For compact structured observability, set `GROUP_RESERVATIONS_TRACE=1` (or use
+the existing `GROUP_RESERVATIONS_DEBUG=1`). The agent emits JSON trace records for tool start/completion and final status with
+phase, sanitized arguments, result summaries, evidence IDs, source URLs,
+transition reasons, and state changes. Private values and URL query values are
+redacted; model chain-of-thought is not logged.
+
 ### Organizer booking handoff
 
-OpenTable login is deferred until the organizer explicitly confirms a booking.
-Restaurant discovery and availability checks do not require an OpenTable login.
 Booking requires the exact restaurant, date, time, and party size to be
-confirmed by the organizer. No OpenTable password passes through the survey,
-prompt, or agent logs.
+confirmed by the organizer. No third-party reservation credentials pass through
+the survey, prompt, or agent logs.
 
 The app JWT is only our identity token. Its `sub` claim is the organizer ID.
-Production requests must verify that token before creating the OpenTable MCP client,
-then pass that organizer ID to `create_opentable_client(user_id)`. That client
-launches with `HOME=.local/opentable-sessions/<user_id>/home`, so the MCP
-server's cookie file at `~/.strider/opentable/cookies.json` is isolated per
-organizer. Never use one long-lived global MCP process for multiple users.
+Production requests must verify that token before creating the organizer-scoped
+browser session.
 
 For the local POC, mint tokens with `GROUP_RESERVATIONS_JWT_SECRET` and use
 `mint_access_token`; in the web app, the existing organizer auth service should
-own token issuance instead. JWTs do not authenticate to OpenTable and must not
-be sent to the OpenTable MCP server.
+own token issuance instead. JWTs do not authenticate to reservation providers.
 
 The recommendation endpoints accept `Authorization: Bearer <token>`. To make
 a local development token:
@@ -221,6 +226,12 @@ the exact restaurant page. OpenTable `restref` values found in website markup
 are used to generate a prefilled availability URL with the selected survey
 date, time, and party size. The agent never derives a provider ID from a
 restaurant name.
+
+Booking discovery is intentionally decomposed into browser observations and
+actions. There is no all-in-one discovery tool: scan results carry a stable
+candidate ID, source URL, and action URL; `reservation_verify` must confirm the
+active page before further interaction. Failed operations move the explicit
+agent state into a failure phase with blockers and recovery actions.
 
 ## Google Places Setup
 
@@ -272,14 +283,11 @@ for account access and credential details.
 # Show provider configuration without printing credentials.
 PYTHONPATH=src python -m groupreservations.opentable_mcp --check-config
 
-# List the OpenTable tools exposed by the agent.
-PYTHONPATH=src python -m groupreservations.opentable_mcp --list-tools
-
-# Search and hydrate Google Places candidates, then check availability.
+# Search and hydrate Google Places candidates, then inspect booking pages.
 PYTHONPATH=src python -m groupreservations.opentable_mcp \
   "Find three Italian restaurants for 4 people in San Francisco this Friday at 7 PM"
 
-# Install the Chromium binary used by the OpenTable MCP.
+# Install the Chromium binary used by the reservation browser.
 npx playwright install chromium
 ```
 
@@ -344,7 +352,10 @@ src/groupreservations/
 ├── config.py                  # Environment-backed settings
 ├── models.py                  # Place and availability structs
 ├── booking.py                 # Provider-aware booking URL handoffs
-├── opentable_mcp.py           # Strands agent/OpenTable boundary
+├── opentable_mcp.py           # Strands agent and reservation workflow
+├── agent_state.py             # Serializable state and action affordances
+├── evidence.py                # Organizer-scoped survey evidence fallback
+├── tracing.py                 # Sanitized agent/tool lifecycle tracing
 ├── places_tools.py            # Hydrated Google Places tools
 ├── reservation_browser.py     # Serialized adaptive booking browser
 └── ports.py                   # Provider protocols

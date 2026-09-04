@@ -21,17 +21,12 @@ must never grant access to organizer controls.
 Authorization: Bearer <our JWT>
         -> verify signature, audience, expiry
         -> sub = organizer_id
-        -> create MCP client for organizer_id
-        -> child HOME = session-root/organizer_id/home
-        -> OpenTable cookies stay in that user's namespace
+    -> create organizer-scoped browser session
+    -> browser state stays in that user's namespace
 ```
 
-The JWT identifies the user to our application; it is not an OpenTable
-credential. The current community MCP server persists cookies at
-`~/.strider/opentable/cookies.json`, so a shared process would create a
-cross-user session leak. The POC therefore uses one short-lived MCP process per
-organizer request with an isolated `HOME`. Production should replace the local
-directory with encrypted per-user session storage or a per-user worker.
+The JWT identifies the user to our application. Browser state is scoped to the
+organizer and should use encrypted per-user session storage in production.
 
 ## Components
 
@@ -41,9 +36,12 @@ directory with encrypted per-user session storage or a per-user worker.
 - `adapters/google_places.py`: REST calls to Google Places search and details.
 - `places_tools.py`: Strands-compatible tools that search and immediately
   hydrate Google restaurant candidates.
-- `opentable_mcp.py`: Bedrock-backed Strands agent and per-organizer OpenTable
-  MCP process. Google Places owns discovery; OpenTable owns availability and
-  booking.
+- `opentable_mcp.py`: Bedrock-backed Strands agent and organizer-scoped browser
+  reservation workflow. Google Places owns discovery; provider pages are
+  inspected through explicit, verified browser candidates.
+- `agent_state.py`: serializable invocation state and tool affordances shared by
+  the agent and browser layer. It records phase, blockers, current page, and
+  permitted next actions without exposing model chain-of-thought.
 - `api.py`: FastAPI HTTP boundary accepting structured survey responses and
   invoking the agent. This boundary is deliberately portable to an AgentCore
   runtime later.
@@ -52,7 +50,7 @@ directory with encrypted per-user session storage or a per-user worker.
   `survey_options` store the invitation; `survey_responses` and
   `response_answers` store independent guest submissions.
 - `auth.py`: application JWT minting/verification and safe organizer IDs.
-- `config.py`: environment-backed AWS, Google, OpenTable, and JWT settings.
+- `config.py`: environment-backed AWS, Google, and JWT settings.
 
 The repository now contains a local web API and static survey UI. The local
 SQLite schema mirrors durable production storage, while Cognito and Aurora
@@ -72,19 +70,28 @@ frontend survey payload
     -> POST /api/surveys/{survey_id}/recommendations
     -> structured request validation
     -> agent prompt
+    -> survey_get_evidence fallback when context is missing or ambiguous
     -> google_places_search
     -> Google Places searchText
     -> get_place for every candidate
     -> hydrated Place structs + source/opening-hours evidence
-    -> OpenTable availability checks for selected Place candidates
+    -> reservation-page inspection and non-final availability checks for selected Place candidates
+    -> explicit agent state + browser available_actions after each observation
     -> ranked explanation with evidence and uncertainty
     -> explicit organizer confirmation
-    -> OpenTable login + reservation booking
+    -> explicit organizer confirmation + external booking handoff
 ```
 
+Agent observability is provided by lifecycle hooks. Trace records capture the
+phase, tool, sanitized input, result summary, evidence/source references,
+transition reason, state changes, and final status without logging private
+model reasoning.
+
 Google Place IDs are the canonical restaurant identity passed into later
-availability checks. A failed OpenTable check must not erase Google results;
-availability is returned as unknown with the failure recorded.
+restaurant-page inspection. Embedded provider URLs, including Toast iframe
+URLs, are promoted to explicit candidate actions and must be opened and
+verified before availability controls can be used. Missing availability
+evidence remains unknown; final booking confirmation remains organizer-gated.
 
 ## Domain objects
 

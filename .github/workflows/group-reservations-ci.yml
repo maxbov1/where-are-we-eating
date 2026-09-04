@@ -39,7 +39,7 @@ jobs:
         run: python -m compileall -q src tests scripts
 
       - name: Run network-free Python tests
-        run: python -m pytest -q tests/test_database.py tests/test_booking.py tests/test_auth.py
+        run: python -m pytest -q tests/test_database.py tests/test_booking.py tests/test_auth.py tests/test_agent_state.py
 
       - name: Set up Node
         uses: actions/setup-node@v4

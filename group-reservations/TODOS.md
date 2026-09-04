@@ -67,5 +67,7 @@ Remaining work is grouped into three tiers by difficulty:
 - [ ] Configure AgentCore inbound authorization and pass the verified
       organizer identity as the actor ID. Keep surveys and responses in the
       application database, not AgentCore session state.
-- [ ] Connect OpenTable through AgentCore Identity using organizer-delegated
-      credentials only when booking is explicitly confirmed.
+- [ ] Add production provider integrations through AgentCore Identity using
+      organizer-delegated credentials only when booking is explicitly
+      confirmed. The local agent currently uses verified browser pages and
+      does not expose provider mutation tools.
