@@ -169,15 +169,27 @@ class ReservationBrowser:
         return json.dumps(payload, default=str)
 
     def _verified(self, candidate_id: str, url: str) -> bool:
-        """Require both identity and active URL to match the last verification."""
-        return bool(
-            self.page
-            and self.page.url == url
+        """Require identity and an active top-level page or embedded frame."""
+        target = self._verified_target(candidate_id, url)
+        return target is not None
+
+    def _verified_target(self, candidate_id: str, url: str):
+        """Return the verified page/frame target for a browser action."""
+        observed = self.state.scanned_candidates.get(candidate_id) if self.state else None
+        valid = bool(
+            self.page and observed
+            and observed.get("url") == url
+            and observed.get("source_url") == self.page.url
             and self.state
             and self.state.verification.get("verified") is True
             and self.state.verification.get("candidate_id") == candidate_id
             and self.state.verification.get("url") == url
         )
+        if not valid or not self.page:
+            return None
+        if url == self.page.url:
+            return self.page
+        return next((frame for frame in self.page.frames if frame.url == url), None)
 
     def _verification_required(self, candidate_id: str, url: str) -> str:
         return self._response({
@@ -289,7 +301,24 @@ class ReservationBrowser:
                 label: el.getAttribute('aria-label') || el.innerText || null
             }))"""
         )
-        frames = [frame.url for frame in self.page.frames if frame.url and frame.url != self.page.url]
+        frame_fields = []
+        frames = []
+        for frame in self.page.frames:
+            if not frame.url or frame.url == self.page.url:
+                continue
+            frames.append(frame.url)
+            try:
+                frame_fields.extend(frame.locator("input, select, textarea, button").evaluate_all(
+                    """els => els.slice(0, 80).map(el => ({
+                        tag: el.tagName.toLowerCase(), type: el.type || null,
+                        name: el.name || null, id: el.id || null,
+                        placeholder: el.placeholder || null,
+                        label: el.getAttribute('aria-label') || el.innerText || null,
+                        frame_url: location.href
+                    }))"""
+                ))
+            except Exception:
+                continue
         candidate_id = _candidate_id(self.page.url)
         return self._response({
             "success": True,
@@ -297,7 +326,7 @@ class ReservationBrowser:
             "candidate": {"candidate_id": candidate_id, "url": self.page.url},
             "url": self.page.url,
             "title": self.page.title(),
-            "fields": fields,
+            "fields": fields + frame_fields,
             "iframes": frames,
             "text": " ".join(self.page.locator("body").inner_text().split())[:4000],
         }, (("reservation_fill", "Fill an identified non-sensitive booking field"),
@@ -450,12 +479,17 @@ class ReservationBrowser:
         next_candidate = candidates[0] if candidates else None
         next_action = None
         if next_candidate:
+            is_embedded = next_candidate.get("tag") == "iframe"
             next_action = {
-                "tool": "reservation_open",
-                "arguments": {"url": next_candidate["url"]},
+                "tool": "reservation_verify" if is_embedded else "reservation_open",
+                "arguments": {
+                    ("candidate_id" if is_embedded else "url"): next_candidate["candidate_id"]
+                    if is_embedded else next_candidate["url"],
+                    **({"url": next_candidate["url"]} if is_embedded else {}),
+                },
                 "candidate_id": next_candidate["candidate_id"],
                 "url": next_candidate["url"],
-                "reason": "highest-confidence actionable reservation candidate",
+                "reason": "highest-confidence embedded or navigable reservation candidate",
             }
         return self._response({
             "success": True,
@@ -468,7 +502,7 @@ class ReservationBrowser:
             "next_action": next_action,
             "navigation_actions": [
                 {
-                    "tool": "reservation_open",
+                    "tool": "reservation_verify" if item.get("tag") == "iframe" else "reservation_open",
                     "candidate_id": item["candidate_id"],
                     "url": item["url"],
                     "label": item.get("label", ""),
@@ -488,12 +522,17 @@ class ReservationBrowser:
 
     def _verify_impl(self, candidate_id: str, url: str) -> str:
         actual_url = self.page.url if self.page else ""
-        expected_id = _candidate_id(actual_url) if actual_url else ""
-        valid = bool(self.page and actual_url == url and candidate_id == expected_id)
+        observed = self.state.scanned_candidates.get(candidate_id) if self.state else None
+        valid = bool(
+            self.page and observed and observed.get("url") == url
+            and observed.get("source_url") == actual_url
+            and (url == actual_url or any(frame.url == url for frame in self.page.frames))
+        )
         if self.state:
             self.state.verification = {
                 "candidate_id": candidate_id,
-                "url": actual_url or url,
+                "url": url,
+                "source_url": actual_url,
                 "verified": valid,
             }
         return self._response({
@@ -515,21 +554,24 @@ class ReservationBrowser:
         return self._run_on_browser_thread(self._fill_impl, candidate_id, url, field, value)
 
     def _fill_impl(self, candidate_id: str, url: str, field: str, value: str) -> str:
-        if not self._verified(candidate_id, url):
+        target = self._verified_target(candidate_id, url)
+        if target is None:
             return self._verification_required(candidate_id, url)
         if not self.page:
             return self._response({"success": False, "error": "Open a booking URL first."},
                                   (("reservation_open", "Open an exact restaurant URL"),),
                                   phase="reservation_preparation", reason="fill requested without a page")
         try:
-            locator = self.page.get_by_label(field, exact=False).first
+            locator = target.get_by_label(field, exact=False).first
             if not locator.count():
-                locator = self.page.locator(
-                    f"input[name='{field}'], input[id='{field}'], select[name='{field}'], textarea[name='{field}']"
+                locator = target.locator(
+                    f"input[name='{field}'], input[id='{field}'], select[name='{field}'], textarea[name='{field}'], "
+                    f"input[type='{field.casefold()}']"
                 ).first
             if locator.count() == 0:
-                return self._response({"success": False, "error": f"Booking field not found: {field}"},
+                return self._response({"success": False, "error": f"Fillable booking field not found: {field}. Inspect controls and use reservation_click for custom buttons."},
                                       (("reservation_inspect", "Inspect available field labels"),
+                                       ("reservation_click", "Use the matching date/time/party-size control if it is a custom button"),
                                        ("reservation_close", "End the browser session")),
                                       phase="reservation_preparation", reason="requested field not found")
             if locator.evaluate("el => el.tagName.toLowerCase()") == "select":
@@ -559,7 +601,8 @@ class ReservationBrowser:
 
     def _prepare_impl(self, candidate_id: str, url: str, booking_url: str,
                       date: str, time: str, party_size: int) -> str:
-        if not self._verified(candidate_id, url):
+        target = self._verified_target(candidate_id, url)
+        if target is None:
             return self._verification_required(candidate_id, url)
         observed = next((item for item in self.state.scanned_candidates.values()  # type: ignore[union-attr]
                          if item.get("url") == booking_url and item.get("source_url") == url), None) \
@@ -596,7 +639,8 @@ class ReservationBrowser:
 
     def _click_impl(self, candidate_id: str, url: str, label: str) -> str:
         """Click a non-submitting control such as Search or Find a table."""
-        if not self._verified(candidate_id, url):
+        target = self._verified_target(candidate_id, url)
+        if target is None:
             return self._verification_required(candidate_id, url)
         if not self.page:
             return self._response({"success": False, "error": "Open a booking URL first."},
@@ -608,9 +652,9 @@ class ReservationBrowser:
                                    ("reservation_close", "End the browser session")),
                                   phase="reservation_preparation", reason="final booking action gated")
         try:
-            locator = self.page.get_by_role("button", name=label, exact=False).first
+            locator = target.get_by_role("button", name=label, exact=False).first
             if locator.count() == 0:
-                locator = self.page.get_by_text(label, exact=False).first
+                locator = target.get_by_text(label, exact=False).first
             if locator.count() == 0:
                 return self._response({"success": False, "error": f"Booking control not found: {label}"},
                                       (("reservation_inspect", "Inspect available controls"),

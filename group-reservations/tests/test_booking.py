@@ -204,6 +204,11 @@ class _FakeLocator:
         return self.candidates
 
 
+class _FakeFrame:
+    def __init__(self, url):
+        self.url = url
+
+
 class _FakePage:
     def __init__(self):
         self.url = "https://restaurant.example/reservations"
@@ -273,7 +278,7 @@ def test_browser_scan_and_verification_are_candidate_bound():
     assert scan["candidates"][0]["candidate_id"]
     assert scan["candidates"][0]["tag"] == "iframe"
     assert scan["candidates"][0]["url"].startswith("https://tables.toasttab.com/")
-    assert scan["next_action"]["tool"] == "reservation_open"
+    assert scan["next_action"]["tool"] == "reservation_verify"
     assert scan["next_action"]["url"] == scan["candidates"][0]["url"]
     assert not any(item["tag"] == "script" for item in scan["candidates"])
     assert scan["candidates"][0]["source_url"] == scan["url"]
@@ -294,6 +299,20 @@ def test_browser_scan_and_verification_are_candidate_bound():
     assert prepared["success"] is True
     assert prepared["provider"] == "Toast"
     assert prepared["booking_url"] == scan["candidates"][0]["url"]
+
+
+def test_browser_verifies_and_targets_an_embedded_frame_without_navigation():
+    browser = _fake_browser()
+    iframe_url = browser.page.candidates[0]["href"]
+    frame = _FakeFrame(iframe_url)
+    browser.page.frames = [frame]
+    scan = json.loads(browser.scan_dom(browser.page.url))
+    iframe = scan["candidates"][0]
+
+    verified = json.loads(browser.verify(iframe["candidate_id"], iframe["url"]))
+
+    assert verified["success"] is True
+    assert browser._verified_target(iframe["candidate_id"], iframe["url"]) is frame
 
 
 def test_browser_prepare_rejects_unobserved_booking_url():

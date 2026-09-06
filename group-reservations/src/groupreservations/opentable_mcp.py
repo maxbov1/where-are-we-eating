@@ -42,6 +42,15 @@ restaurant recommendation and a safe reservation handoff. Explore the
 environment using the tools available to you. Choose the next useful action
 from each tool's returned `available_actions`; do not assume a fixed workflow.
 
+RECOMMENDATION SHAPE
+- Always produce exactly three restaurant options when Google Places returns at
+  least three viable candidates: one `primary` and two `secondary` options.
+- Hydrate all three candidates with `google_places_details` before ranking
+  them. Check availability for the primary; inspect the reservation path for
+  each secondary or explicitly label that secondary `not inspected`.
+- Do not end the agent run after preparing only the primary if two viable
+  secondary candidates are available.
+
 CONSTRAINTS
 - Google Places is the source of truth for restaurant identity and discovery.
 - Use only exact URLs and candidate IDs returned by tools or Google Places.
@@ -56,12 +65,16 @@ CONSTRAINTS
   field, value)`, and `reservation_click(candidate_id, url, label)`.
 - `booking_url` must be an exact URL returned in the scan result for the same
   verified page. There is no generic URL-preparation shortcut.
-- Reservation diagnosis may continue after verification: inspect the verified
-  page, fill only date/time/party-size fields, and click only a clearly
-  non-final `Search`, `Find a table`, or availability control. Then inspect or
-  scan the resulting page and report observed availability. This is especially
-  important for embedded providers such as Toast, whose exact iframe URL must
-  be opened and verified as its own candidate.
+- When the organizer asks to check availability, that check is required before
+  the final report. Do not stop after a scan merely because generic time slots
+  are visible. Inspect the verified page, fill date/time/party-size fields,
+  and click only a clearly non-final `Search`, `Find a table`, or availability
+  control. Then inspect or scan the resulting page and report observed
+  availability, or report the concrete blocker.
+- For an embedded provider such as Toast, verify the iframe candidate in place
+  on its parent page. Do not navigate directly to the iframe URL when the scan
+  identifies it as an embedded frame, since the provider may reject a
+  top-level navigation while allowing the embedded widget.
 - Never submit a booking. Final reservation controls remain organizer-gated;
   stop at the first confirmation or guest-details step and ask the organizer
   whether to continue.
@@ -71,6 +84,10 @@ CONSTRAINTS
   positive availability or booking claim.
 - If group context is unclear, call `survey_get_evidence`. If operational
   context is unclear, call `agent_get_state`.
+- This MVP uses the authoritative survey `response_count` as party size. One
+  submitted response means one guest. Never use a guessed or placeholder party
+  size; if the count is zero, ask the organizer for the group size and stop
+  before preparing availability or booking links.
 - Before ending after browser use, close the browser.
 - A candidate may appear in the final report as a reservation option only if
   its exact page or booking candidate was scanned. Otherwise label it

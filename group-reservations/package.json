@@ -15,5 +15,8 @@
   "license": "ISC",
   "devDependencies": {
     "playwright": "^1.58.2"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   }
 }

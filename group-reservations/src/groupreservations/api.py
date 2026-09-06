@@ -235,6 +235,7 @@ def _agent_prompt(payload: RecommendationRequest) -> str:
         "schedule": {"times_by_date": payload.availability},
         "responses": [response.model_dump(exclude_none=True) for response in payload.responses],
     }
+    response_count = report.get("response_count", len(payload.responses))
     return f"""Select the best restaurant options for this group event.
 
 Authoritative cleaned group report:
@@ -243,6 +244,14 @@ Authoritative cleaned group report:
 Survey evidence ID: {payload.survey_id or "unavailable"}. If any group
 context is missing, contradictory, or unclear during tool calls, use the
 survey_get_evidence tool with this ID before making a decision.
+
+PARTY SIZE
+This MVP has no separate party-size question. Treat the authoritative
+response_count ({response_count}) as the number of guests for reservation
+preparation: one submitted response means party size 1, five responses means
+party size 5. Never invent a placeholder party size. If response_count is 0,
+party size is unknown; do not prepare a booking URL or claim availability and
+end with a request for the organizer to provide the group size.
 
 Treat this report as authoritative. Do not recalculate votes or use disabled
 options. Treat schedule.times_by_date as authoritative: a time is valid only
@@ -260,11 +269,11 @@ disagreement. Surface every item in confidence.notes (for example a split on
 budget or dates) instead of papering over it. Higher confidence means you may
 state a group preference more directly.
 
-Use Google Places first and select one best restaurant, date, and time for the
-group. The agent owns this decision and must not ask the organizer to choose
-among tied dates or times. Then check availability for the strongest candidate.
-Keep two alternatives as short fallback options, but do not present them as an
-undecided top-three list. Keep the Google restaurant results even if
+Use Google Places first and select one best restaurant plus exactly two
+secondary fallback restaurants when at least three viable results exist. The
+agent owns this decision and must not ask the organizer to choose among tied
+dates or times. Hydrate all three, inspect each reservation path, and check
+availability for the primary. Keep the Google restaurant results even if
 availability fails. Explain which date, time, and preference signals drove the
 decision. Do not book anything until the organizer confirms.
 For the primary restaurant, preserve exact provider URLs in separate labeled fields:
