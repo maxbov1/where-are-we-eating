@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Allura&family=DM+Serif+Display:ital@0;1&family=Libre+Baskerville:wght@400;700&display=swap');
 :root { --ink:#51301f; --muted:#806956; --paper:#f9f0d8; --line:#cdbb99; --accent:#73422c; }
 * { box-sizing:border-box; }
-body { margin:0; min-width:320px; color:var(--ink); font-family:'Libre Baskerville', Georgia, serif; background:#79603b url('assets/survey-builder-background.png') center top / cover fixed no-repeat; }
+body { margin:0; min-width:320px; color:var(--ink); font-family:'Libre Baskerville', Georgia, serif; background:#79603b url('assets/supper-background.jpg') center top / cover fixed no-repeat; }
 .builder-page { min-height:100svh; padding:clamp(30px,5vw,70px) 20px 80px; }
 .builder-card { position:relative; width:min(930px,100%); margin:auto; padding:clamp(28px,5vw,62px) clamp(24px,6vw,82px); background:rgba(249,240,216,.91); box-shadow:0 20px 55px rgba(63,35,17,.22); display:grid; gap:18px; }
 .builder-header { display:flex; align-items:end; justify-content:space-between; gap:20px; border-bottom:1px solid rgba(81,48,31,.3); padding-bottom:18px; }
