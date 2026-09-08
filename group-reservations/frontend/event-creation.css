@@ -4,7 +4,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; color: var(--ink); font-family: 'Libre Baskerville', Georgia, serif; }
 .supper-page { position: relative; display: grid; min-height: 100svh; overflow: hidden; background: #765832; }
-.dinner-scene { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(46, 27, 15, .12), rgba(46, 27, 15, 0) 48%), url('assets/supper-dinner-party.png') center / cover no-repeat; filter: saturate(.86) contrast(.98); }
+.dinner-scene { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(46, 27, 15, .12), rgba(46, 27, 15, 0) 48%), url('assets/supper-background.jpg') center / cover no-repeat; filter: saturate(.86) contrast(.98); }
 .paper-brand, .invitation { position: relative; z-index: 1; background-color: var(--paper); background-image: linear-gradient(rgba(123, 87, 42, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(123, 87, 42, .02) 1px, transparent 1px); background-size: 7px 7px; }
 .paper-brand { position: absolute; right: 0; top: 0; width: min(35vw, 508px); min-height: 31vh; display: grid; place-items: center; padding: 42px 32px 56px; border-radius: 0 0 0 64px; box-shadow: -10px 13px 22px rgba(47, 26, 12, .18); }
 .paper-brand::after { content: ''; position: absolute; inset: 0 0 16px 0; border-bottom: 4px dotted rgba(81, 48, 31, .62); border-radius: 0 0 0 64px; pointer-events: none; }
