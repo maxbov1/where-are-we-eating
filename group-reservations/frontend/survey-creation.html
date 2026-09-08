@@ -11,7 +11,7 @@
       <form class="builder-card" id="event-form">
         <header class="builder-header"><p class="eyebrow">Set the vibe</p><h1>Where at?</h1><a href="event-creation.html">Start over</a></header>
         <label>Event name<input required id="event-name" value="Friday dinner" /></label>
-        <label>City<div class="location-picker"><input required minlength="2" maxlength="160" id="event-location" value="San Francisco" autocomplete="address-level2" /><div class="location-menu hidden" id="organizer-location-menu"></div></div><small>Choose a city. This becomes the broad restaurant search area.</small></label>
+        <label>City<div class="location-picker"><input required minlength="2" maxlength="160" id="event-location" placeholder="Start typing a city…" autocomplete="off" /><div class="location-menu hidden" id="organizer-location-menu" role="listbox"></div></div><small>Choose a suggested city. This becomes the broad restaurant search area.</small><small class="location-status" id="location-status" aria-live="polite"></small></label>
         <div class="field-label">Set the times for each date</div>
         <div class="schedule-editor" id="schedule-editor"></div>
         <label>Close responses after<select id="event-expiry"><option value="2">2 days (default)</option><option value="3">3 days</option><option value="7">1 week</option><option value="14">2 weeks</option></select><small>Guests can’t respond after this. You can still view results.</small></label>
