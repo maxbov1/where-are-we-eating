@@ -28,8 +28,8 @@ form.addEventListener('submit', async (event) => {
     // Matches the existing app.js organizer persistence contract.
     localStorage.setItem('organizerEmail', email.value.trim());
     localStorage.setItem('organizerId', user.id);
-    setMessage('Your place is saved. Opening the survey builder…');
-    window.location.assign('survey-creation.html');
+    setMessage('Your place is saved. Opening the survey settings…');
+    window.location.assign('index.html?organizer=1');
   } catch (error) {
     setMessage(error instanceof Error ? error.message : 'Could not create organizer. Please try again.', true);
     submit.disabled = false;
