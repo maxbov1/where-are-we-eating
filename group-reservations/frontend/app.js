@@ -138,7 +138,7 @@ $('run-agent').addEventListener('click', async () => {
   $('recommendations').innerHTML = '<p class="response-summary">Google Places is finding and hydrating candidates. OpenTable availability will be checked next.</p>';
   try {
     const response = await fetch(`${API_BASE}/api/surveys/${state.event.surveyId}/recommendations`, { method:'POST', headers:{'Content-Type':'application/json','X-Organizer-Id':state.organizerId || 'local-organizer'} });
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || 'Agent request failed');
     const answer = data.answer || '';
     const bookingUrl = findBookingUrl(answer);
@@ -147,7 +147,8 @@ $('run-agent').addEventListener('click', async () => {
     $('recommendations').innerHTML = `<article class="agent-answer"><div class="card-kicker">✦ / agent response</div><div>${formatAgentAnswer(answer)}</div></article>`;
   } catch (error) {
     console.error('Recommendation request failed', error);
-    $('recommendations').innerHTML = '<p class="error-message">We could not reach the recommendation service. Please try again in a moment.</p>';
+    const message = error instanceof Error ? error.message : 'We could not reach the recommendation service. Please try again in a moment.';
+    $('recommendations').innerHTML = `<p class="error-message">${escapeHtml(message)}</p>`;
   } finally {
     button.disabled = false;
     button.innerHTML = 'Find our top 3 <span>✦</span>';

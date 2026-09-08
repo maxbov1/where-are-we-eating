@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Supper — Plan the evening</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="screen active" aria-labelledby="survey-builder-title">
+        <div class="page-heading">
+          <div><p class="eyebrow">Your supper plan</p><h1 id="survey-builder-title">Now set the table.</h1></div>
+          <a class="text-button" href="event-creation.html">Start over</a>
+        </div>
+        <div class="build-page">
+          <form class="card event-form" id="event-form">
+            <div class="card-kicker">The particulars</div>
+            <h2>When and where?</h2>
+            <label>Event name <input required id="event-name" value="Friday supper" /></label>
+            <label>City <input required id="event-location" autocomplete="address-level2" value="San Francisco" /></label>
+            <label>Date <input required id="event-date" type="date" /></label>
+            <label>Time <input required id="event-time" type="time" value="19:00" /></label>
+            <label>Close responses after
+              <select id="event-expiry"><option value="2">2 days</option><option value="3">3 days</option><option value="7">1 week</option></select>
+            </label>
+            <button class="button primary" type="submit">Generate share link <span>→</span></button>
+            <p class="fine-print" id="builder-message" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+    </main>
+    <script src="survey-creation.js"></script>
+  </body>
+</html>

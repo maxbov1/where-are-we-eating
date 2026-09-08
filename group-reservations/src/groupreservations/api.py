@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Annotated
 
+from botocore.exceptions import BotoCoreError, NoCredentialsError
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -24,6 +26,8 @@ from .database import (
     init_db,
 )
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Where Are We Eating? Agent API", version="0.1.0")
 app.add_middleware(
@@ -350,9 +354,33 @@ def recommendations(
         survey_id=payload.survey_id,
         group_location=payload.location,
     )
-    return {"status": "ok", "answer": run(
-        _agent_prompt(payload), user_id=organizer_id, state=state
-    )}
+    try:
+        answer = run(_agent_prompt(payload), user_id=organizer_id, state=state)
+    except NoCredentialsError as exc:
+        # An unhandled exception is rendered by Uvicorn outside the CORS
+        # middleware, which makes the browser misleadingly report a CORS
+        # failure. Return a normal API error instead.
+        logger.info("recommendation request rejected: AWS credentials are unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Recommendations are not configured on this server. "
+                "Sign in to AWS or configure the AWS profile used for Bedrock, then retry."
+            ),
+        ) from exc
+    except BotoCoreError as exc:
+        logger.warning("recommendation provider request failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="The recommendation provider is temporarily unavailable. Please try again shortly.",
+        ) from exc
+    except Exception as exc:
+        logger.exception("recommendation request failed")
+        raise HTTPException(
+            status_code=502,
+            detail="The recommendation service could not complete the request. Please try again.",
+        ) from exc
+    return {"status": "ok", "answer": answer}
 
 
 @app.post("/api/surveys/{survey_id}/recommendations")
