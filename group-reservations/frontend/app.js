@@ -85,16 +85,75 @@ function createEvent(event) {
   $('results-card').classList.remove('hidden');
   $('results-title').textContent = `${event.name} is ready for votes.`;
   $('share-modal').classList.remove('hidden');
+  renderSurveyControls();
+}
+
+function organizerHeaders(extra) { return { ...(extra || {}), 'X-Organizer-Id': state.organizerId || 'local-organizer' }; }
+
+function describeExpiry(expiresAt, status) {
+  if (status === 'revoked') return 'Link revoked — guests can no longer open it.';
+  if (status === 'expired') return 'Voting closed automatically at the expiry.';
+  if (!expiresAt) return 'No expiry set — open until you close it.';
+  return `Closes ${new Date(expiresAt).toLocaleString()}.`;
+}
+
+function renderSurveyControls() {
+  const status = state.event?.status || 'active';
+  const chip = $('survey-status');
+  chip.textContent = status === 'active' ? 'Open' : status;
+  chip.classList.toggle('closed', status !== 'active');
+  $('survey-expiry').textContent = describeExpiry(state.event?.expiresAt, status);
+  $('toggle-revoke').textContent = state.event?.revokedAt ? 'Reopen voting' : 'Close voting';
+}
+
+function applyLifecycle(data) {
+  if (!state.event) return;
+  Object.assign(state.event, { status:data.status, expiresAt:data.expires_at, revokedAt:data.revoked_at });
+  renderSurveyControls();
 }
 
 $('signup-form').addEventListener('submit', async (event) => { event.preventDefault(); const email = $('organizer-email').value; const response = await fetch(`${API_BASE}/api/users`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email }) }); const user = await response.json(); if (!response.ok) return alert(user.detail || 'Could not create organizer'); state.organizerId = user.id; localStorage.setItem('organizerEmail', email); localStorage.setItem('organizerId', user.id); hydrateDates(); show('organizer'); });
-$('event-form').addEventListener('submit', async (event) => { event.preventDefault(); const scheduleRows = [...document.querySelectorAll('.schedule-editor-row')]; const availability = Object.fromEntries(scheduleRows.map((row) => [row.querySelector('.schedule-date').value, [...row.querySelectorAll('.time-input')].map((input) => input.value).filter(Boolean)]).filter(([date, slots]) => date && slots.length)); const dates = Object.keys(availability); const times = [...new Set(Object.values(availability).flat())]; const questions = Object.fromEntries(selectedTopics().map((key) => [key, questionState[key].filter((option) => questionEnabled[key].has(option))])); if (dates.length < 1 || dates.length > 3) return alert('Choose between one and three dates.'); if (new Set(dates).size !== dates.length) return alert('Choose a different date for each row.'); if (Object.values(availability).some((slots) => !slots.length || new Set(slots).size !== slots.length)) return alert('Give each date at least one unique time.'); if (Object.values(questions).some((options) => !options.length)) return alert('Keep at least one answer option in each question.'); const location = $('event-location'); const payload = { organizer_id:state.organizerId || 'local-organizer', event_name:$('event-name').value, location:location.value, location_place_id:location.dataset.placeId || null, location_lat:location.dataset.lat ? Number(location.dataset.lat) : null, location_lng:location.dataset.lng ? Number(location.dataset.lng) : null, dates, times, availability, questions }; const response = await fetch(`${API_BASE}/api/surveys`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) return alert(data.detail || 'Could not create survey'); state.event = { name:payload.event_name, location:payload.location, dates, times, availability, questions:payload.questions, surveyId:data.id, publicToken:data.public_token, url:data.share_url }; createEvent(state.event); });
+$('event-form').addEventListener('submit', async (event) => { event.preventDefault(); const scheduleRows = [...document.querySelectorAll('.schedule-editor-row')]; const availability = Object.fromEntries(scheduleRows.map((row) => [row.querySelector('.schedule-date').value, [...row.querySelectorAll('.time-input')].map((input) => input.value).filter(Boolean)]).filter(([date, slots]) => date && slots.length)); const dates = Object.keys(availability); const times = [...new Set(Object.values(availability).flat())]; const questions = Object.fromEntries(selectedTopics().map((key) => [key, questionState[key].filter((option) => questionEnabled[key].has(option))])); if (dates.length < 1 || dates.length > 3) return alert('Choose between one and three dates.'); if (new Set(dates).size !== dates.length) return alert('Choose a different date for each row.'); if (Object.values(availability).some((slots) => !slots.length || new Set(slots).size !== slots.length)) return alert('Give each date at least one unique time.'); if (Object.values(questions).some((options) => !options.length)) return alert('Keep at least one answer option in each question.'); const location = $('event-location'); const payload = { event_name:$('event-name').value, location:location.value, location_place_id:location.dataset.placeId || null, location_lat:location.dataset.lat ? Number(location.dataset.lat) : null, location_lng:location.dataset.lng ? Number(location.dataset.lng) : null, dates, times, availability, questions }; const response = await fetch(`${API_BASE}/api/surveys`, { method:'POST', headers:{'Content-Type':'application/json','X-Organizer-Id':state.organizerId || 'local-organizer'}, body:JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) return alert(data.detail || 'Could not create survey'); state.event = { name:payload.event_name, location:payload.location, dates, times, availability, questions:payload.questions, surveyId:data.id, publicToken:data.public_token, url:data.share_url, status:data.survey.status, expiresAt:data.survey.expires_at, revokedAt:data.survey.revoked_at }; createEvent(state.event); });
 $('schedule-editor').addEventListener('click', (event) => { const row = event.target.closest('.schedule-editor-row'); if (!row) return; if (event.target.matches('[data-add-schedule-time]')) { const list = row.querySelector('.schedule-time-list'); if (list.children.length >= 3) return; const time = document.createElement('label'); time.className = 'time-row'; time.innerHTML = '<input required class="time-input" type="time" value="21:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button>'; list.appendChild(time); } if (event.target.classList.contains('remove-time') && row.querySelectorAll('.time-row').length > 1) event.target.closest('.time-row').remove(); });
 $('copy-message').addEventListener('click', async () => { await navigator.clipboard?.writeText($('share-message').value); $('copied-note').classList.remove('hidden'); setTimeout(() => $('copied-note').classList.add('hidden'), 2400); });
 document.querySelectorAll('[data-close-modal]').forEach((node) => node.addEventListener('click', () => $('share-modal').classList.add('hidden')));
 $('open-survey').addEventListener('click', () => { $('share-modal').classList.add('hidden'); prepareSurvey(); show('survey'); });
 $('back-organizer').addEventListener('click', () => show('organizer'));
 $('reset-app').addEventListener('click', () => { state.event = null; state.responses = []; $('share-modal').classList.add('hidden'); $('results-card').classList.add('hidden'); show('signup'); });
+$('toggle-revoke').addEventListener('click', async () => {
+  if (!state.event?.surveyId) return;
+  const button = $('toggle-revoke');
+  button.disabled = true;
+  try {
+    const response = await fetch(`${API_BASE}/api/surveys/${state.event.surveyId}/revoke`, { method:'POST', headers:organizerHeaders({'Content-Type':'application/json'}), body:JSON.stringify({ revoked: !state.event.revokedAt }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not update the survey');
+    applyLifecycle(data);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+async function downloadExport(format) {
+  if (!state.event?.surveyId) return;
+  try {
+    const response = await fetch(`${API_BASE}/api/surveys/${state.event.surveyId}/responses/export?format=${format}`, { headers:organizerHeaders() });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Export failed');
+    const url = URL.createObjectURL(await response.blob());
+    const link = Object.assign(document.createElement('a'), { href:url, download:`survey-${state.event.surveyId}-responses.${format}` });
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+$('export-csv').addEventListener('click', () => downloadExport('csv'));
+$('export-json').addEventListener('click', () => downloadExport('json'));
+
 $('copy-link').addEventListener('click', async () => { await navigator.clipboard?.writeText($('survey-link').value); $('copied-note').textContent = 'Link copied — ready for the group chat.'; $('copied-note').classList.remove('hidden'); setTimeout(() => $('copied-note').classList.add('hidden'), 2400); });
 
 function formatDistance(value) { const miles = Number.parseInt(value, 10); return Number.isFinite(miles) ? `${miles}${miles === 30 ? '+' : ''} mile${miles === 1 ? '' : 's'} from meetup` : value; }
@@ -110,7 +169,7 @@ function renderSurveySchedule(availability) {
 function prepareSurvey() { const event = state.event || { name:'Friday dinner', location:'San Francisco', dates:defaultDates(), times:['19:00'], availability:Object.fromEntries(defaultDates().map((date) => [date, ['19:00']])), questions:{ cuisine:['Italian','Japanese','Mexican','Surprise me'] } }; state.guestOrigin = null; $('guest-origin').value = ''; const availability = event.availability || Object.fromEntries(event.dates.map((date) => [date, event.times])); const questions = event.questions || {}; $('survey-title').innerHTML = `Help pick <em>${event.name}.</em>`; $('survey-location').textContent = `${event.location} · about 30 seconds · no sign-up`; $('survey-schedule').innerHTML = renderSurveySchedule(availability); const questionMarkup = { cuisine:['What sounds good?', 'Pick up to two.', 'checkbox'], distance:['How far should we search?', 'Choose the maximum restaurant radius from the meetup spot. 30+ miles keeps this useful when everyone is spread out.', 'range'], vibe:["What's the vibe?", 'Choose one.', 'radio'], price:["What's the budget?", 'Per person, before drinks.', 'radio'], dietary:['Anything we should know?', 'Choose what the table should know.', 'checkbox'] }; $('survey-question-fields').innerHTML = Object.entries(questions).filter(([, options]) => options?.length).map(([key, options]) => { const [title, help, type] = questionMarkup[key] || [QUESTION_LABELS[key] || key, 'Choose what works for you.', 'radio']; const limit = key === 'cuisine' ? ' Pick up to two.' : ''; const control = type === 'range' ? renderDistanceQuestion(options) : options.map((option) => `<label class="survey-choice"><input ${type === 'radio' ? 'required' : ''} type="${type}" name="${key}" value="${option}" /> <span>${option}</span><b>${type === 'radio' ? '✓' : ''}</b></label>`).join(''); return `<fieldset><legend>${title}</legend><p class="question-help">${help}${limit}</p><div class="survey-choices">${control}</div></fieldset>`; }).join(''); }
 $('survey-question-fields').addEventListener('input', (event) => { if (!event.target.matches('input[type="range"][data-distance-values]')) return; const values = event.target.dataset.distanceValues.split(','); const value = values[Number(event.target.value)]; event.target.parentElement.querySelector('output').textContent = formatDistance(value); event.target.parentElement.querySelector('input[type="hidden"]').value = value; });
 $('survey-form').addEventListener('change', (event) => { if (event.target.name === 'cuisine' && document.querySelectorAll('input[name="cuisine"]:checked').length > 2) event.target.checked = false; });
-$('survey-form').addEventListener('submit', async (event) => { event.preventDefault(); const availability = {}; document.querySelectorAll('[data-availability-date]').forEach((input) => { if (input.checked) (availability[input.dataset.availabilityDate] ||= []).push(input.value); }); const dates = Object.keys(availability); const times = [...new Set(Object.values(availability).flat())]; if (!dates.length || !times.length || !state.event?.publicToken) return; const origin = state.guestOrigin || {}; const answer = { dates, times, availability, cuisines:[...document.querySelectorAll('input[name="cuisine"]:checked')].map((input) => input.value), dietary:[...document.querySelectorAll('input[name="dietary"]:checked')].map((input) => input.value), distance:document.querySelector('input[name="distance"]:checked, input[type="hidden"][name="distance"]')?.value, vibe:document.querySelector('input[name="vibe"]:checked')?.value, price:document.querySelector('input[name="price"]:checked')?.value, origin_place_id:origin.place_id || null, origin_label:origin.label || null, origin_lat:origin.latitude ?? null, origin_lng:origin.longitude ?? null, respondent_token:localStorage.getItem('respondentToken') || crypto.randomUUID() }; localStorage.setItem('respondentToken', answer.respondent_token); const response = await fetch(`${API_BASE}/api/surveys/${state.event.publicToken}/responses`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(answer) }); if (!response.ok) return alert('Could not save your response. Please try again.'); state.responses.push(answer); $('survey-form').classList.add('hidden'); $('survey-thanks').classList.remove('hidden'); updateResponseSummary(); });
+$('survey-form').addEventListener('submit', async (event) => { event.preventDefault(); const availability = {}; document.querySelectorAll('[data-availability-date]').forEach((input) => { if (input.checked) (availability[input.dataset.availabilityDate] ||= []).push(input.value); }); const dates = Object.keys(availability); const times = [...new Set(Object.values(availability).flat())]; if (!dates.length || !times.length || !state.event?.publicToken) return; const origin = state.guestOrigin || {}; const answer = { dates, times, availability, cuisines:[...document.querySelectorAll('input[name="cuisine"]:checked')].map((input) => input.value), dietary:[...document.querySelectorAll('input[name="dietary"]:checked')].map((input) => input.value), distance:document.querySelector('input[name="distance"]:checked, input[type="hidden"][name="distance"]')?.value, vibe:document.querySelector('input[name="vibe"]:checked')?.value, price:document.querySelector('input[name="price"]:checked')?.value, origin_place_id:origin.place_id || null, origin_label:origin.label || null, origin_lat:origin.latitude ?? null, origin_lng:origin.longitude ?? null, respondent_token:localStorage.getItem('respondentToken') || crypto.randomUUID() }; localStorage.setItem('respondentToken', answer.respondent_token); const response = await fetch(`${API_BASE}/api/surveys/${state.event.publicToken}/responses`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(answer) }); if (response.status === 410) return showClosedSurvey((await response.json().catch(() => ({}))).detail); if (!response.ok) return alert('Could not save your response. Please try again.'); state.responses.push(answer); $('survey-form').classList.add('hidden'); $('survey-thanks').classList.remove('hidden'); updateResponseSummary(); });
 function updateResponseSummary() { if (!state.event) return; $('response-summary').textContent = `${state.responses.length} response${state.responses.length === 1 ? '' : 's'} collected · structured answers are ready for the recommendation agent.`; }
 $('run-agent').addEventListener('click', async () => {
   if (!state.event) return;
@@ -147,5 +206,15 @@ function findBookingUrl(value) {
   return line?.match(/https?:\/\/[^\s)]+/)?.[0] || '';
 }
 
-async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, dates:survey.dates, times:survey.times, availability:survey.availability, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href }; prepareSurvey(); show('survey'); }
+function showClosedSurvey(detail) {
+  $('survey-form').classList.add('hidden');
+  $('survey-thanks').classList.add('hidden');
+  $('survey-closed-note').textContent = /expired/i.test(detail || '') ? 'Voting closed automatically when this survey expired.' : 'The organizer has closed voting for this event.';
+  $('survey-closed').classList.remove('hidden');
+  document.querySelector('.survey-intro')?.classList.add('hidden');
+  document.querySelector('.survey-progress')?.classList.add('hidden');
+  show('survey');
+}
+
+async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (response.status === 410) return showClosedSurvey(survey.detail); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, dates:survey.dates, times:survey.times, availability:survey.availability, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href, status:survey.status, expiresAt:survey.expires_at }; prepareSurvey(); show('survey'); }
 loadPublicSurvey();

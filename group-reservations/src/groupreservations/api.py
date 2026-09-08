@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .opentable_mcp import run
 from .auth import verify_access_token
 from .adapters.google_places import autocomplete_locations, get_location_details
-from .database import aggregate_survey, append_response, create_survey, create_user, get_survey, init_db
+from .database import SurveyClosed, aggregate_survey, append_response, create_survey, create_user, export_responses, get_survey, init_db, set_survey_expiry, set_survey_revoked
 from .config import settings
 
 app = FastAPI(title="Where Are We Eating? Agent API", version="0.1.0")
@@ -21,6 +24,8 @@ app.add_middleware(
     allow_origins=["http://localhost:4173", "http://127.0.0.1:4173"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    # The export download reads the filename the API chose for the attachment.
+    expose_headers=["Content-Disposition"],
 )
 init_db()
 
@@ -58,7 +63,6 @@ class UserRequest(BaseModel):
 
 
 class SurveyRequest(BaseModel):
-    organizer_id: str
     event_name: str = Field(min_length=1, max_length=120)
     location: str = Field(min_length=1, max_length=160)
     dates: list[str] = Field(min_length=1, max_length=3)
@@ -68,6 +72,18 @@ class SurveyRequest(BaseModel):
     location_place_id: str | None = Field(default=None, max_length=200)
     location_lat: float | None = Field(default=None, ge=-90, le=90)
     location_lng: float | None = Field(default=None, ge=-180, le=180)
+    # Left unset, the survey expires a grace day after its last candidate date.
+    expires_at: str | None = Field(default=None, max_length=40)
+
+
+class RevokeRequest(BaseModel):
+    revoked: bool
+
+
+class ExpirationRequest(BaseModel):
+    """A null `expires_at` clears the expiry so only revocation can close the survey."""
+
+    expires_at: str | None = Field(default=None, max_length=40)
 
 
 class SurveyResponseRequest(BaseModel):
@@ -136,12 +152,17 @@ def users(
 
 
 @app.post("/api/surveys")
-def surveys(payload: SurveyRequest) -> dict[str, object]:
-    """Persist an organizer survey and return its public token."""
+def surveys(
+    payload: SurveyRequest,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Persist a survey owned by the authenticated organizer and return its token."""
+    organizer_id = _require_organizer(authorization, x_organizer_id)
     data = payload.model_dump()
     if not data["availability"]:
         data["availability"] = {date: list(data["times"]) for date in data["dates"]}
-    survey = create_survey(**data)
+    survey = create_survey(organizer_id=organizer_id, **data)
     share_url = f"{settings.public_app_url.rstrip('/')}/?survey={survey['public_token']}"
     return {
         "id": survey["id"],
@@ -157,7 +178,11 @@ def survey(public_token: str) -> dict[str, object]:
     record = get_survey(public_token)
     if not record:
         raise HTTPException(status_code=404, detail="Survey not found")
-    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions")}
+    # 410 rather than 404 so the guest UI can say "voting closed" instead of
+    # "not found" for a link that was legitimately shared and later closed.
+    if record["status"] != "active":
+        raise HTTPException(status_code=410, detail=f"Survey is {record['status']}")
+    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions", "status", "expires_at")}
 
 # records a guest's response to the survey
 @app.post("/api/surveys/{public_token}/responses")
@@ -181,23 +206,121 @@ def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[s
             origin_lat=payload.origin_lat,
             origin_lng=payload.origin_lng,
         )
+    except SurveyClosed as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "ok", "response": response}
 
 
 @app.get("/api/surveys/{survey_id}/aggregate")
-def survey_aggregate(survey_id: str) -> dict[str, object]:
-    """Return cleaned, vote-counted context for the recommendation agent."""
+def survey_aggregate(
+    survey_id: str,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Return cleaned, vote-counted context to the survey's organizer only.
+
+    Closing a survey stops guests, not the organizer: this stays readable on a
+    revoked or expired survey, because closing voting is how you finish it.
+    """
+    organizer_id = _require_organizer(authorization, x_organizer_id)
+    record = _require_survey_owner(survey_id, organizer_id)
     result = aggregate_survey(survey_id)
     if not result:
         raise HTTPException(status_code=404, detail="Survey not found")
+    result.update({key: record[key] for key in ("status", "expires_at", "revoked_at")})
     # Guest origins are private inputs for the recommendation run, not part of
-    # the public aggregate inspection endpoint.
+    # the organizer's aggregate inspection view.
     private_fields = {"origin_place_id", "origin_label", "origin_lat", "origin_lng"}
     result["responses"] = [{key: value for key, value in response.items() if key not in private_fields} for response in result.get("responses", [])]
     result["report"]["responses"] = [{key: value for key, value in response.items() if key not in private_fields} for response in result["report"].get("responses", [])]
     return result
+
+
+def _lifecycle_state(record: dict[str, object]) -> dict[str, object]:
+    return {key: record[key] for key in ("id", "public_token", "status", "expires_at", "revoked_at")}
+
+
+@app.post("/api/surveys/{survey_id}/revoke")
+def survey_revoke(
+    survey_id: str,
+    payload: RevokeRequest,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Close or reopen a shared survey link. Revoking deletes no response."""
+    organizer_id = _require_organizer(authorization, x_organizer_id)
+    _require_survey_owner(survey_id, organizer_id)
+    record = set_survey_revoked(survey_id, payload.revoked)
+    if not record:
+        raise HTTPException(status_code=404, detail="Survey not found")
+    return _lifecycle_state(record)
+
+
+@app.post("/api/surveys/{survey_id}/expiration")
+def survey_expiration(
+    survey_id: str,
+    payload: ExpirationRequest,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Set or clear when the survey stops accepting guest responses."""
+    organizer_id = _require_organizer(authorization, x_organizer_id)
+    _require_survey_owner(survey_id, organizer_id)
+    try:
+        record = set_survey_expiry(survey_id, payload.expires_at)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="expires_at must be an ISO 8601 timestamp") from exc
+    if not record:
+        raise HTTPException(status_code=404, detail="Survey not found")
+    return _lifecycle_state(record)
+
+
+_EXPORT_COLUMNS = ("response_id", "submitted_at", "updated_at", "dates", "times", "availability", "origin_label", "origin_place_id", "origin_lat", "origin_lng")
+
+
+def _csv_cell(value: object) -> str:
+    """Render one response field as a single readable spreadsheet cell."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return " | ".join(f"{date}: {', '.join(slots)}" for date, slots in value.items())
+    if isinstance(value, list):
+        return " | ".join(str(item) for item in value)
+    return str(value)
+
+
+def _responses_csv(export: dict[str, object]) -> str:
+    columns = [*_EXPORT_COLUMNS, *export["questions"]]
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(columns)
+    for response in export["responses"]:
+        writer.writerow([_csv_cell(response.get(column)) for column in columns])
+    return buffer.getvalue()
+
+
+@app.get("/api/surveys/{survey_id}/responses/export")
+def survey_response_export(
+    survey_id: str,
+    export_format: str = Query(default="json", alias="format", pattern="^(json|csv)$"),
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Export every stored response to the owning organizer, closed survey included."""
+    organizer_id = _require_organizer(authorization, x_organizer_id)
+    _require_survey_owner(survey_id, organizer_id)
+    export = export_responses(survey_id)
+    if not export:
+        raise HTTPException(status_code=404, detail="Survey not found")
+    if export_format == "json":
+        return JSONResponse(content=export)
+    return Response(
+        content=_responses_csv(export),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="survey-{export["survey_id"]}-responses.csv"'},
+    )
 
 
 def _agent_prompt(payload: RecommendationRequest) -> str:
@@ -252,8 +375,8 @@ reservation is already made.
 def _resolve_organizer_id(
     authorization: str | None,
     legacy_id: str | None,
-) -> str:
-    """Use a bearer token when supplied; retain the local header workflow."""
+) -> str | None:
+    """Verified bearer token wins; the legacy header stays for local-only calls."""
     if authorization:
         scheme, _, token = authorization.partition(" ")
         if scheme.casefold() != "bearer" or not token:
@@ -262,7 +385,28 @@ def _resolve_organizer_id(
             return verify_access_token(token)
         except Exception as exc:
             raise HTTPException(status_code=401, detail="Invalid access token") from exc
-    return legacy_id or "local-organizer"
+    return legacy_id or None
+
+
+def _require_organizer(
+    authorization: str | None,
+    legacy_id: str | None,
+) -> str:
+    """Every survey-management route must resolve a concrete organizer identity."""
+    organizer_id = _resolve_organizer_id(authorization, legacy_id)
+    if not organizer_id:
+        raise HTTPException(status_code=401, detail="Organizer authentication required")
+    return organizer_id
+
+
+def _require_survey_owner(survey_id: str, organizer_id: str) -> dict[str, object]:
+    """Load a survey and confirm the caller organizes it before exposing responses."""
+    record = get_survey(survey_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Survey not found")
+    if record.get("organizer_id") != organizer_id:
+        raise HTTPException(status_code=403, detail="Survey belongs to another organizer")
+    return record
 
 
 def _payload_from_aggregate(result: dict[str, object]) -> RecommendationRequest:
@@ -293,11 +437,9 @@ def recommendations(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
     """Pass structured survey results to the agent for recommendation."""
-    organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
+    organizer_id = _require_organizer(authorization, x_organizer_id)
     if payload.survey_id:
-        survey_record = get_survey(payload.survey_id)
-        if not survey_record:
-            raise HTTPException(status_code=404, detail="Survey not found")
+        _require_survey_owner(payload.survey_id, organizer_id)
         aggregate = aggregate_survey(payload.survey_id)
         if not aggregate:
             raise HTTPException(status_code=404, detail="Survey not found")
@@ -312,9 +454,8 @@ def survey_recommendations(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
     """Load a persisted survey and send its responses to the agent."""
-    record = get_survey(survey_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Survey not found")
+    organizer_id = _require_organizer(authorization, x_organizer_id)
+    _require_survey_owner(survey_id, organizer_id)
     aggregate = aggregate_survey(survey_id)
     if not aggregate:
         raise HTTPException(status_code=404, detail="Survey not found")

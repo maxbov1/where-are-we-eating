@@ -76,6 +76,14 @@
           </div>
           <section class="card results-card hidden" id="results-card">
             <div class="results-heading"><div><div class="card-kicker">Let the group decide</div><h2 id="results-title">Responses will land here.</h2></div><button class="button primary" id="run-agent" type="button">Find our top 3 <span>✦</span></button></div>
+            <div class="survey-controls">
+              <div class="control-state"><span class="status-chip" id="survey-status">Open</span><span class="control-note" id="survey-expiry"></span></div>
+              <div class="control-actions">
+                <button class="button ghost" id="toggle-revoke" type="button">Close voting</button>
+                <button class="button ghost" id="export-csv" type="button">Export CSV</button>
+                <button class="button ghost" id="export-json" type="button">Export JSON</button>
+              </div>
+            </div>
             <div id="response-summary" class="response-summary"></div>
             <div id="booking-handoff" class="booking-handoff hidden"></div>
             <div id="recommendations" class="recommendations"></div>
@@ -94,6 +102,7 @@
               <button class="button primary full" type="submit">Send my picks <span>→</span></button>
             </form>
             <div class="survey-thanks hidden" id="survey-thanks"><div class="thanks-mark">✓</div><p class="eyebrow">You're in</p><h1>Thanks for weighing in.</h1><p>The organizer will get the group’s best options soon.</p><button class="button ghost" id="back-organizer" type="button">Back to organizer view</button></div>
+            <div class="survey-thanks hidden" id="survey-closed"><div class="thanks-mark closed-mark">✕</div><p class="eyebrow">Voting has ended</p><h1>This survey is closed.</h1><p id="survey-closed-note">The organizer has closed voting for this event.</p></div>
           </div>
         </section>
       </main>

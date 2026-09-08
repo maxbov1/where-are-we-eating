@@ -152,8 +152,14 @@ cleaned vote summary:
 
 ```bash
 PYTHONPATH=src python scripts/seed_fixture.py
-curl http://127.0.0.1:8000/api/surveys/<survey_id>/aggregate
+curl http://127.0.0.1:8000/api/surveys/<survey_id>/aggregate \
+  -H 'X-Organizer-Id: <organizer_id>'
 ```
+
+`/aggregate` exposes guest responses, so it is organizer-only: the request must
+carry `Authorization: Bearer <token>` (or the legacy `X-Organizer-Id` header for
+local calls) and the resolved organizer must own that survey, otherwise the API
+returns `401` or `403`.
 
 The aggregate response and its `report` carry a deterministic `confidence`
 block: a per-dimension score, an overall `high`/`medium`/`low`/`none` band, the
@@ -201,8 +207,17 @@ For the local POC, mint tokens with `GROUP_RESERVATIONS_JWT_SECRET` and use
 own token issuance instead. JWTs do not authenticate to OpenTable and must not
 be sent to the OpenTable MCP server.
 
-The recommendation endpoints accept `Authorization: Bearer <token>`. To make
-a local development token:
+Every survey-management route — `POST /api/surveys`, `GET /api/surveys/{id}/aggregate`,
+`POST /api/surveys/{id}/recommendations`, and `POST /api/recommendations` — requires
+an organizer identity and rejects the request with `401` when none resolves. Routes
+that read or act on a specific survey also check that the resolved organizer owns it
+and return `403` otherwise. The guest-facing routes (`GET /api/surveys/{token}` and
+`POST /api/surveys/{token}/responses`) stay public. `POST /api/surveys` no longer
+reads an `organizer_id` from the request body; ownership comes only from the verified
+identity.
+
+These routes accept `Authorization: Bearer <token>`. To make a local development
+token:
 
 ```bash
 export GROUP_RESERVATIONS_JWT_SECRET='use-a-local-secret-with-at-least-32-characters'
@@ -210,7 +225,47 @@ PYTHONPATH=src python -c 'from groupreservations.auth import mint_access_token; 
 ```
 
 The legacy `X-Organizer-Id` header remains available for local-only calls while
-the Cognito/API Gateway boundary is being built.
+the Cognito/API Gateway boundary is being built; the organizer ID it carries must
+still match the survey's owner.
+
+### Closing a survey and exporting responses
+
+A survey is `active`, `expired`, or `revoked`. That status is **derived** from two
+timestamps rather than stored, so it can never drift from them:
+
+- `expires_at` — when voting stops on its own. A new survey defaults to one grace
+  day past its last candidate date, in UTC, so a share link never stays open
+  forever. A survey created with only past dates gets no expiry rather than being
+  born expired.
+- `revoked_at` — when the organizer closed the link by hand.
+
+**Closing stops guests, not the organizer.** `/aggregate` and the recommendation
+routes keep working on a closed survey, because closing voting is how you finish
+collecting and move on to the recommendation. The guest routes return `410 Gone`
+with the reason, which the survey page renders as "voting closed" rather than
+"not found".
+
+```bash
+# Close the link now (reversible — revoking deletes no response).
+curl -X POST http://127.0.0.1:8000/api/surveys/<survey_id>/revoke \
+  -H 'Content-Type: application/json' -H 'X-Organizer-Id: <organizer_id>' \
+  -d '{"revoked": true}'
+
+# Move or clear the expiry. A null value means "only revocation can close this".
+curl -X POST http://127.0.0.1:8000/api/surveys/<survey_id>/expiration \
+  -H 'Content-Type: application/json' -H 'X-Organizer-Id: <organizer_id>' \
+  -d '{"expires_at": "2026-10-01T00:00:00+00:00"}'
+
+# Export every stored response, closed survey included.
+curl "http://127.0.0.1:8000/api/surveys/<survey_id>/responses/export?format=csv" \
+  -H 'X-Organizer-Id: <organizer_id>'
+```
+
+The export is the organizer's full record: per-response answers, the availability
+map, submitted/updated timestamps, and the guest origins that `/aggregate`
+deliberately strips. It omits `respondent_user_id` — that guest identifier is
+stable *across* surveys, so exporting it would let two exports be correlated back
+to one person. `response_id` is scoped to a single survey and is safe to keep.
 
 ### Booking discovery and handoffs
 

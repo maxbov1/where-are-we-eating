@@ -24,8 +24,11 @@ Remaining work is grouped into three tiers by difficulty:
 
 ## Tier 1 — Local, no infrastructure
 
-- [ ] Add network-free tests for survey creation, option filtering, duplicate
-      response updates, aggregation, and organizer authorization.
+- [x] Add network-free tests for survey creation, option filtering, duplicate
+      response updates, aggregation, and organizer authorization. Creation,
+      filtering, duplicate updates, and aggregation live in
+      `tests/test_database.py`; the organizer-authorization boundary is covered
+      end to end in `tests/test_api_authorization.py`.
 - [ ] Add deterministic restaurant ranking before agent prose. Blocked until
       restaurant candidates are hydrated outside the agent; today the agent
       still does discovery and ranking in one call. Group-preference confidence
@@ -36,9 +39,21 @@ Remaining work is grouped into three tiers by difficulty:
 
 ## Tier 2 — Application features
 
-- [ ] Add organizer authorization checks for every survey-management route.
-      Routes currently trust a browser-supplied `X-Organizer-Id` / body field.
-- [ ] Add survey expiration, revoke, and response export controls.
+- [x] Add organizer authorization checks for every survey-management route.
+      `api.py` now resolves the organizer from a verified bearer token or the
+      legacy `X-Organizer-Id` header (never the request body), rejects
+      unauthenticated calls with `401`, and returns `403` when the caller does
+      not own the referenced survey. Guest routes keyed by `public_token` stay
+      public. Covered by `tests/test_api_authorization.py`.
+- [x] Add survey expiration, revoke, and response export controls.
+      `surveys.expires_at` / `surveys.revoked_at` drive a derived
+      `active`/`expired`/`revoked` status. A new survey expires a grace day past
+      its last candidate date so no link stays open forever. `POST
+      /api/surveys/{id}/revoke`, `POST /api/surveys/{id}/expiration`, and `GET
+      /api/surveys/{id}/responses/export?format=csv|json` are organizer-only.
+      Closing returns `410 Gone` to guests while leaving the organizer's
+      aggregate, export, and recommendation routes open. Covered by
+      `tests/test_survey_lifecycle.py` and `tests/test_api_survey_controls.py`.
 - [ ] Add Playwright smoke coverage for organizer creation and guest voting.
 - [ ] Add retries and idempotency keys around provider calls and booking.
 - [ ] Persist recommendation runs, hydrated Places candidates, availability

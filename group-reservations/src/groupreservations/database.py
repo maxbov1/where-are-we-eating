@@ -5,16 +5,54 @@ import hashlib
 import json
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .config import settings
 from .scoring import score_confidence
 
+# Voting stays open this many whole days past the last candidate date. The schema
+# stores no event timezone, so the boundary is UTC and the organizer can always
+# override it through set_survey_expiry.
+_EXPIRY_GRACE_DAYS = 1
+
+
+class SurveyClosed(Exception):
+    """Raised when a guest acts on a revoked or expired survey."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__(f"Survey is {status}")
+        self.status = status
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_timestamp(value: str) -> datetime:
+    """Read an ISO8601 timestamp, treating a naive value as UTC."""
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _default_expires_at(dates: list[str]) -> str | None:
+    """Close voting a grace day after the last candidate date, or never if that is already past."""
+    try:
+        last = max(_parse_timestamp(f"{value}T00:00:00+00:00") for value in dates)
+    except ValueError:
+        return None
+    expires = last + timedelta(days=_EXPIRY_GRACE_DAYS + 1)
+    return expires.isoformat() if expires > datetime.now(timezone.utc) else None
+
+
+def survey_status(expires_at: str | None, revoked_at: str | None) -> str:
+    """Derive lifecycle state from timestamps so a stored status can never drift."""
+    if revoked_at:
+        return "revoked"
+    if expires_at and _parse_timestamp(expires_at) <= datetime.now(timezone.utc):
+        return "expired"
+    return "active"
 
 
 def _connect() -> sqlite3.Connection:
@@ -44,7 +82,8 @@ def init_db() -> None:
           location TEXT NOT NULL, dates_json TEXT NOT NULL, times_json TEXT NOT NULL,
           availability_json TEXT NOT NULL DEFAULT '{}',
           questions_json TEXT NOT NULL DEFAULT '{}', location_place_id TEXT,
-          location_lat REAL, location_lng REAL, created_at TEXT NOT NULL
+          location_lat REAL, location_lng REAL, created_at TEXT NOT NULL,
+          expires_at TEXT, revoked_at TEXT
         );
         CREATE TABLE IF NOT EXISTS survey_questions (
           id TEXT PRIMARY KEY, survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
@@ -82,7 +121,9 @@ def init_db() -> None:
             db.execute("ALTER TABLE surveys ADD COLUMN availability_json TEXT NOT NULL DEFAULT '{}'")
         if "questions_json" not in survey_columns:
             db.execute("ALTER TABLE surveys ADD COLUMN questions_json TEXT NOT NULL DEFAULT '{}'")
-        for column, definition in (("location_place_id", "TEXT"), ("location_lat", "REAL"), ("location_lng", "REAL")):
+        # Existing surveys migrate to NULL on both lifecycle columns, which reads as
+        # "never expires, not revoked" — an upgrade must not retroactively close a link.
+        for column, definition in (("location_place_id", "TEXT"), ("location_lat", "REAL"), ("location_lng", "REAL"), ("expires_at", "TEXT"), ("revoked_at", "TEXT")):
             if column not in survey_columns:
                 db.execute(f"ALTER TABLE surveys ADD COLUMN {column} {definition}")
         response_columns = {row["name"] for row in db.execute("PRAGMA table_info(survey_responses)")}
@@ -148,14 +189,18 @@ def _normalize_availability(dates: list[str], times: list[str], availability: di
     return {date: list(times) for date in dates}
 
 
-def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None, availability: dict[str, list[str]] | None = None) -> dict[str, Any]:
+def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None, availability: dict[str, list[str]] | None = None, expires_at: str | None = None) -> dict[str, Any]:
     init_db()
     availability = _normalize_availability(dates, times, availability)
     dates = list(availability)
     times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
-    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": _now()}
+    # An unset expiry falls back to the candidate dates so no share link stays open
+    # forever. A survey whose dates are already past is born without one instead of
+    # born expired; the organizer can set an explicit expiry at any time.
+    expires_at = expires_at or _default_expires_at(dates)
+    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": _now(), "expires_at": expires_at, "revoked_at": None, "status": survey_status(expires_at, None)}
     with _connect() as db:
-        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), survey["created_at"]))
+        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at,expires_at,revoked_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), survey["created_at"], expires_at))
         _insert_questions(db, survey["id"], questions)
     return survey
 
@@ -168,14 +213,20 @@ def _question_map(db: sqlite3.Connection, survey_id: str) -> dict[str, tuple[str
     return result
 
 
-def _responses(db: sqlite3.Connection, survey_id: str) -> list[dict[str, Any]]:
-    rows = db.execute("SELECT r.id,r.respondent_user_id,r.dates_json,r.times_json,r.availability_json,r.origin_place_id,r.origin_label,r.origin_lat,r.origin_lng,q.question_key,o.value FROM survey_responses r LEFT JOIN response_answers a ON a.response_id=r.id LEFT JOIN survey_questions q ON q.id=a.question_id LEFT JOIN survey_options o ON o.id=a.option_id WHERE r.survey_id=? ORDER BY r.submitted_at", (survey_id,)).fetchall()
+def _responses(db: sqlite3.Connection, survey_id: str, include_timestamps: bool = False) -> list[dict[str, Any]]:
+    rows = db.execute("SELECT r.id,r.respondent_user_id,r.dates_json,r.times_json,r.availability_json,r.origin_place_id,r.origin_label,r.origin_lat,r.origin_lng,r.submitted_at,r.updated_at,q.question_key,o.value FROM survey_responses r LEFT JOIN response_answers a ON a.response_id=r.id LEFT JOIN survey_questions q ON q.id=a.question_id LEFT JOIN survey_options o ON o.id=a.option_id WHERE r.survey_id=? ORDER BY r.submitted_at", (survey_id,)).fetchall()
     result: dict[str, dict[str, Any]] = {}
     for row in rows:
         dates = json.loads(row["dates_json"])
         times = json.loads(row["times_json"])
         availability = json.loads(row["availability_json"] or "{}")
-        response = result.setdefault(row["id"], {"response_id": row["id"], "respondent_user_id": row["respondent_user_id"], "dates": dates, "times": times, "availability": availability or {date: list(times) for date in dates}, "origin_place_id": row["origin_place_id"], "origin_label": row["origin_label"], "origin_lat": row["origin_lat"], "origin_lng": row["origin_lng"]})
+        base = {"response_id": row["id"], "respondent_user_id": row["respondent_user_id"], "dates": dates, "times": times, "availability": availability or {date: list(times) for date in dates}, "origin_place_id": row["origin_place_id"], "origin_label": row["origin_label"], "origin_lat": row["origin_lat"], "origin_lng": row["origin_lng"]}
+        # Timestamps stay out of the aggregate path so the agent-facing report keeps
+        # its existing shape; only the organizer export asks for them.
+        if include_timestamps:
+            base["submitted_at"] = row["submitted_at"]
+            base["updated_at"] = row["updated_at"]
+        response = result.setdefault(row["id"], base)
         if row["question_key"] and row["value"]:
             response.setdefault(row["question_key"], []).append(row["value"])
     return list(result.values())
@@ -193,7 +244,54 @@ def get_survey(identifier: str) -> dict[str, Any] | None:
         survey["dates"] = list(survey["availability"]); survey["times"] = list(dict.fromkeys(time for slots in survey["availability"].values() for time in slots)); survey.pop("questions_json", None)
         survey["questions"] = {key: list(options) for key, (_, options) in _question_map(db, survey["id"]).items()}
         survey["responses"] = _responses(db, survey["id"])
+        survey["status"] = survey_status(survey.get("expires_at"), survey.get("revoked_at"))
         return survey
+
+
+def _survey_row_id(db: sqlite3.Connection, identifier: str) -> str | None:
+    row = db.execute("SELECT id FROM surveys WHERE id=? OR public_token=?", (identifier, identifier)).fetchone()
+    return row["id"] if row else None
+
+
+def set_survey_revoked(identifier: str, revoked: bool) -> dict[str, Any] | None:
+    """Revoke or restore a share link, leaving any configured expiry untouched."""
+    init_db()
+    with _connect() as db:
+        survey_id = _survey_row_id(db, identifier)
+        if not survey_id:
+            return None
+        db.execute("UPDATE surveys SET revoked_at=? WHERE id=?", (_now() if revoked else None, survey_id))
+    return get_survey(identifier)
+
+
+def set_survey_expiry(identifier: str, expires_at: str | None) -> dict[str, Any] | None:
+    """Set or clear the expiry; clearing leaves revocation as the only closing control."""
+    init_db()
+    if expires_at:
+        _parse_timestamp(expires_at)  # reject an unparseable timestamp before writing
+    with _connect() as db:
+        survey_id = _survey_row_id(db, identifier)
+        if not survey_id:
+            return None
+        db.execute("UPDATE surveys SET expires_at=? WHERE id=?", (expires_at, survey_id))
+    return get_survey(identifier)
+
+
+def export_responses(identifier: str) -> dict[str, Any] | None:
+    """Organizer-only dump of every stored response, including the private guest origins."""
+    survey = get_survey(identifier)
+    if not survey:
+        return None
+    with _connect() as db:
+        responses = _responses(db, survey["id"], include_timestamps=True)
+    return {
+        "survey_id": survey["id"], "event_name": survey["event_name"], "location": survey["location"],
+        "status": survey["status"], "expires_at": survey["expires_at"], "revoked_at": survey["revoked_at"],
+        "questions": survey["questions"], "response_count": len(responses),
+        # respondent_user_id is stable across surveys, so exporting it would let two
+        # exports be correlated back to one guest. response_id is scoped to this survey.
+        "responses": [{key: value for key, value in response.items() if key != "respondent_user_id"} for response in responses],
+    }
 
 
 def append_response(public_token: str, guest_token: str, dates: list[str], times: list[str], answers: dict[str, list[str]], origin_place_id: str | None = None, origin_label: str | None = None, origin_lat: float | None = None, origin_lng: float | None = None, availability: dict[str, list[str]] | None = None) -> dict[str, Any]:
@@ -202,9 +300,12 @@ def append_response(public_token: str, guest_token: str, dates: list[str], times
     dates = list(availability)
     times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
     with _connect() as db:
-        survey = db.execute("SELECT id FROM surveys WHERE public_token=?", (public_token,)).fetchone()
+        survey = db.execute("SELECT id,expires_at,revoked_at FROM surveys WHERE public_token=?", (public_token,)).fetchone()
         if not survey:
             raise LookupError("Survey not found")
+        status = survey_status(survey["expires_at"], survey["revoked_at"])
+        if status != "active":
+            raise SurveyClosed(status)
         guest = db.execute("SELECT id FROM users WHERE guest_token_hash=?", (token_hash,)).fetchone()
         if guest:
             guest_id = guest["id"]

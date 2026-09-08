@@ -46,11 +46,18 @@ directory with encrypted per-user session storage or a per-user worker.
   booking.
 - `api.py`: FastAPI HTTP boundary accepting structured survey responses and
   invoking the agent. This boundary is deliberately portable to an AgentCore
-  runtime later.
+  runtime later. Survey-management routes (`POST /api/surveys`, `/aggregate`,
+  and the recommendation routes) resolve an organizer identity from a verified
+  bearer token or the legacy `X-Organizer-Id` header — never from the request
+  body — and reject callers who do not own the referenced survey. Guest routes
+  keyed by `public_token` stay unauthenticated.
 - `database.py`: SQLite persistence mirroring the production schema. `users`
   stores organizers and temporary guests; `surveys`, `survey_questions`, and
   `survey_options` store the invitation; `survey_responses` and
-  `response_answers` store independent guest submissions.
+  `response_answers` store independent guest submissions. `surveys.expires_at`
+  and `surveys.revoked_at` carry the lifecycle; `append_response` refuses a
+  closed survey with `SurveyClosed`, and `export_responses` is the organizer's
+  full per-response record.
 - `auth.py`: application JWT minting/verification and safe organizer IDs.
 - `config.py`: environment-backed AWS, Google, OpenTable, and JWT settings.
 
@@ -91,7 +98,10 @@ availability is returned as unknown with the failure recorded.
 - `Event`: organizer, title, status, response URL/token, survey, candidate
   dates, and a date-to-time availability map. A time slot belongs only to the
   date where the organizer configured it; the aggregate must not create a
-  cross-product of every date and every time.
+  cross-product of every date and every time. Status is derived from the
+  `expires_at` and `revoked_at` timestamps (`revoked` outranks `expired`) rather
+  than stored, so it cannot drift from them. An unset expiry defaults to a grace
+  day past the last candidate date so no share link stays open indefinitely.
 - `SurveyQuestion`: stable key, prompt, answer type, options, and active state.
 - `GuestResponse`: event, opaque respondent token, structured answers,
   submitted timestamp, and revision timestamp.
@@ -130,6 +140,8 @@ positive recommendation.
 ## Security and privacy
 
 - Use an opaque, revocable response token; do not put guest answers in the URL.
+  Revoking or expiring a survey closes the guest routes with `410 Gone` while
+  leaving the organizer's aggregate, export, and recommendation routes open.
 - Rate-limit public response submission and make submissions idempotent.
 - Keep organizer authentication and guest participation as separate concerns.
 - Store the minimum guest identity needed for the event; anonymous responses
