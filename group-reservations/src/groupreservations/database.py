@@ -12,47 +12,28 @@ from typing import Any
 from .config import settings
 from .scoring import score_confidence
 
-# Voting stays open this many whole days past the last candidate date. The schema
-# stores no event timezone, so the boundary is UTC and the organizer can always
-# override it through set_survey_expiry.
-_EXPIRY_GRACE_DAYS = 1
+""" Default time for survey expiration if not specified. """
+DEFAULT_SURVEY_TTL = timedelta(days=2)
 
 
 class SurveyClosed(Exception):
-    """Raised when a guest acts on a revoked or expired survey."""
-
-    def __init__(self, status: str) -> None:
-        super().__init__(f"Survey is {status}")
-        self.status = status
+    """Raised when the response of the survey arrives after expires_at."""
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_timestamp(value: str) -> datetime:
-    """Read an ISO8601 timestamp, treating a naive value as UTC."""
-    parsed = datetime.fromisoformat(value)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _default_expires_at(dates: list[str]) -> str | None:
-    """Close voting a grace day after the last candidate date, or never if that is already past."""
+def _is_expired(expires_at: str | None, *, now: datetime | None = None) -> bool:
+    if not expires_at:
+        return False
     try:
-        last = max(_parse_timestamp(f"{value}T00:00:00+00:00") for value in dates)
+        deadline = datetime.fromisoformat(expires_at)
     except ValueError:
-        return None
-    expires = last + timedelta(days=_EXPIRY_GRACE_DAYS + 1)
-    return expires.isoformat() if expires > datetime.now(timezone.utc) else None
-
-
-def survey_status(expires_at: str | None, revoked_at: str | None) -> str:
-    """Derive lifecycle state from timestamps so a stored status can never drift."""
-    if revoked_at:
-        return "revoked"
-    if expires_at and _parse_timestamp(expires_at) <= datetime.now(timezone.utc):
-        return "expired"
-    return "active"
+        return False
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) >= deadline
 
 
 def _connect() -> sqlite3.Connection:
@@ -83,7 +64,7 @@ def init_db() -> None:
           availability_json TEXT NOT NULL DEFAULT '{}',
           questions_json TEXT NOT NULL DEFAULT '{}', location_place_id TEXT,
           location_lat REAL, location_lng REAL, created_at TEXT NOT NULL,
-          expires_at TEXT, revoked_at TEXT
+          expires_at TEXT
         );
         CREATE TABLE IF NOT EXISTS survey_questions (
           id TEXT PRIMARY KEY, survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
@@ -126,6 +107,8 @@ def init_db() -> None:
         for column, definition in (("location_place_id", "TEXT"), ("location_lat", "REAL"), ("location_lng", "REAL"), ("expires_at", "TEXT"), ("revoked_at", "TEXT")):
             if column not in survey_columns:
                 db.execute(f"ALTER TABLE surveys ADD COLUMN {column} {definition}")
+        if "expires_at" not in survey_columns:
+            db.execute("ALTER TABLE surveys ADD COLUMN expires_at TEXT")
         response_columns = {row["name"] for row in db.execute("PRAGMA table_info(survey_responses)")}
         if "dates_json" not in response_columns:
             db.execute("ALTER TABLE survey_responses ADD COLUMN dates_json TEXT NOT NULL DEFAULT '[]'")
@@ -194,13 +177,12 @@ def create_survey(organizer_id: str, event_name: str, location: str, dates: list
     availability = _normalize_availability(dates, times, availability)
     dates = list(availability)
     times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
-    # An unset expiry falls back to the candidate dates so no share link stays open
-    # forever. A survey whose dates are already past is born without one instead of
-    # born expired; the organizer can set an explicit expiry at any time.
-    expires_at = expires_at or _default_expires_at(dates)
-    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": _now(), "expires_at": expires_at, "revoked_at": None, "status": survey_status(expires_at, None)}
+    created_at = _now()
+    if not expires_at:
+        expires_at = (datetime.fromisoformat(created_at) + DEFAULT_SURVEY_TTL).isoformat()
+    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": created_at, "expires_at": expires_at, "is_open": not _is_expired(expires_at)}
     with _connect() as db:
-        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at,expires_at,revoked_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), survey["created_at"], expires_at))
+        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), created_at, expires_at))
         _insert_questions(db, survey["id"], questions)
     return survey
 
@@ -244,7 +226,7 @@ def get_survey(identifier: str) -> dict[str, Any] | None:
         survey["dates"] = list(survey["availability"]); survey["times"] = list(dict.fromkeys(time for slots in survey["availability"].values() for time in slots)); survey.pop("questions_json", None)
         survey["questions"] = {key: list(options) for key, (_, options) in _question_map(db, survey["id"]).items()}
         survey["responses"] = _responses(db, survey["id"])
-        survey["status"] = survey_status(survey.get("expires_at"), survey.get("revoked_at"))
+        survey["is_open"] = not _is_expired(survey.get("expires_at"))
         return survey
 
 
@@ -300,12 +282,11 @@ def append_response(public_token: str, guest_token: str, dates: list[str], times
     dates = list(availability)
     times = list(dict.fromkeys(time for slots in availability.values() for time in slots))
     with _connect() as db:
-        survey = db.execute("SELECT id,expires_at,revoked_at FROM surveys WHERE public_token=?", (public_token,)).fetchone()
+        survey = db.execute("SELECT id, expires_at FROM surveys WHERE public_token=?", (public_token,)).fetchone()
         if not survey:
             raise LookupError("Survey not found")
-        status = survey_status(survey["expires_at"], survey["revoked_at"])
-        if status != "active":
-            raise SurveyClosed(status)
+        if _is_expired(survey["expires_at"]):
+            raise SurveyClosed("This survey is closed to new responses")
         guest = db.execute("SELECT id FROM users WHERE guest_token_hash=?", (token_hash,)).fetchone()
         if guest:
             guest_id = guest["id"]

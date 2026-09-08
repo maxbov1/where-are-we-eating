@@ -7,6 +7,7 @@ function show(screen) { Object.values(screens).forEach((node) => node.classList.
 function defaultDates() { const today = new Date(); const friday = new Date(today); friday.setDate(today.getDate() + ((5 - today.getDay() + 7) % 7 || 7)); return [0, 7, 14].map((offset) => { const date = new Date(friday); date.setDate(friday.getDate() + offset); return date.toISOString().slice(0, 10); }); }
 function prettyDate(value) { return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(`${value}T12:00:00`)); }
 function prettyTime(value) { const [hours, minutes] = value.split(':'); return new Intl.DateTimeFormat('en-US', { hour:'numeric', minute:'2-digit' }).format(new Date(2000, 0, 1, Number(hours), Number(minutes))); }
+function prettyDateTime(value) { return new Intl.DateTimeFormat('en-US', { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(new Date(value)); }
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 function setupLocationPicker(inputId, menuId, { citiesOnly = false, onSelect = () => {} } = {}) {
   const input = $(inputId); const menu = $(menuId); let sessionToken = crypto.randomUUID(); let timer;
@@ -77,11 +78,28 @@ $('question-options').addEventListener('change', (event) => {
 });
 $('question-options').addEventListener('click', (event) => { const addButton = event.target.closest('[data-add-option]'); if (!addButton) return; const key = addButton.dataset.addOption; const value = window.prompt(`Add a ${QUESTION_LABELS[key].toLowerCase()} choice`); if (!value?.trim() || questionState[key].includes(value.trim())) return; if (questionState[key].length >= 10) return alert('Keep each question to 10 choices or fewer.'); questionState[key].push(value.trim()); questionEnabled[key].add(value.trim()); renderQuestionOptions(); });
 document.querySelectorAll('[data-close-question]').forEach((node) => node.addEventListener('click', () => { activeQuestion = null; $('question-drawer').classList.add('hidden'); }));
+function renderSurveyQr(url) {
+  const image = $('qr-code');
+  if (!window.QRCode) {
+    image.removeAttribute('src');
+    image.alt = 'Survey link available in the field below';
+    return;
+  }
+  window.QRCode.toDataURL(url, { width: 180, margin: 1, errorCorrectionLevel: 'M' })
+    .then((dataUrl) => { image.src = dataUrl; image.alt = 'QR code for the group survey'; })
+    .catch((error) => {
+      console.error('Could not generate survey QR code', error);
+      image.removeAttribute('src');
+      image.alt = 'Survey link available in the field below';
+    });
+}
+
 function createEvent(event) {
   state.event = event;
   $('survey-link').value = event.url;
-  $('qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(event.url)}`;
+  renderSurveyQr(event.url);
   $('share-message').value = `🍽️ Help us pick ${event.name} in ${event.location}!\n\nVote here (30 seconds): ${event.url}\n\nPick the dates and vibe that work for you — we’ll find the best table for everyone.`;
+  $('expiry-note').textContent = event.expiresAt ? `Responses close ${prettyDateTime(event.expiresAt)}.` : '';
   $('results-card').classList.remove('hidden');
   $('results-title').textContent = `${event.name} is ready for votes.`;
   $('share-modal').classList.remove('hidden');
@@ -166,7 +184,7 @@ function renderDistanceQuestion(options) {
 function renderSurveySchedule(availability) {
   return Object.entries(availability).map(([date, times]) => `<div class="survey-day"><h3>${prettyDate(date)}</h3><div class="survey-choices">${times.map((time) => `<label class="survey-choice"><input type="checkbox" data-availability-date="${date}" value="${time}" /> <span>${prettyTime(time)}</span><b>✓</b></label>`).join('')}</div></div>`).join('');
 }
-function prepareSurvey() { const event = state.event || { name:'Friday dinner', location:'San Francisco', dates:defaultDates(), times:['19:00'], availability:Object.fromEntries(defaultDates().map((date) => [date, ['19:00']])), questions:{ cuisine:['Italian','Japanese','Mexican','Surprise me'] } }; state.guestOrigin = null; $('guest-origin').value = ''; const availability = event.availability || Object.fromEntries(event.dates.map((date) => [date, event.times])); const questions = event.questions || {}; $('survey-title').innerHTML = `Help pick <em>${event.name}.</em>`; $('survey-location').textContent = `${event.location} · about 30 seconds · no sign-up`; $('survey-schedule').innerHTML = renderSurveySchedule(availability); const questionMarkup = { cuisine:['What sounds good?', 'Pick up to two.', 'checkbox'], distance:['How far should we search?', 'Choose the maximum restaurant radius from the meetup spot. 30+ miles keeps this useful when everyone is spread out.', 'range'], vibe:["What's the vibe?", 'Choose one.', 'radio'], price:["What's the budget?", 'Per person, before drinks.', 'radio'], dietary:['Anything we should know?', 'Choose what the table should know.', 'checkbox'] }; $('survey-question-fields').innerHTML = Object.entries(questions).filter(([, options]) => options?.length).map(([key, options]) => { const [title, help, type] = questionMarkup[key] || [QUESTION_LABELS[key] || key, 'Choose what works for you.', 'radio']; const limit = key === 'cuisine' ? ' Pick up to two.' : ''; const control = type === 'range' ? renderDistanceQuestion(options) : options.map((option) => `<label class="survey-choice"><input ${type === 'radio' ? 'required' : ''} type="${type}" name="${key}" value="${option}" /> <span>${option}</span><b>${type === 'radio' ? '✓' : ''}</b></label>`).join(''); return `<fieldset><legend>${title}</legend><p class="question-help">${help}${limit}</p><div class="survey-choices">${control}</div></fieldset>`; }).join(''); }
+function prepareSurvey() { $('survey-closed').classList.add('hidden'); $('survey-form').classList.remove('hidden'); const event = state.event || { name:'Friday dinner', location:'San Francisco', dates:defaultDates(), times:['19:00'], availability:Object.fromEntries(defaultDates().map((date) => [date, ['19:00']])), questions:{ cuisine:['Italian','Japanese','Mexican','Surprise me'] } }; state.guestOrigin = null; $('guest-origin').value = ''; const availability = event.availability || Object.fromEntries(event.dates.map((date) => [date, event.times])); const questions = event.questions || {}; $('survey-title').innerHTML = `Help pick <em>${event.name}.</em>`; $('survey-location').textContent = `${event.location} · about 30 seconds · no sign-up`; $('survey-schedule').innerHTML = renderSurveySchedule(availability); const questionMarkup = { cuisine:['What sounds good?', 'Pick up to two.', 'checkbox'], distance:['How far should we search?', 'Choose the maximum restaurant radius from the meetup spot. 30+ miles keeps this useful when everyone is spread out.', 'range'], vibe:["What's the vibe?", 'Choose one.', 'radio'], price:["What's the budget?", 'Per person, before drinks.', 'radio'], dietary:['Anything we should know?', 'Choose what the table should know.', 'checkbox'] }; $('survey-question-fields').innerHTML = Object.entries(questions).filter(([, options]) => options?.length).map(([key, options]) => { const [title, help, type] = questionMarkup[key] || [QUESTION_LABELS[key] || key, 'Choose what works for you.', 'radio']; const control = type === 'range' ? renderDistanceQuestion(options) : options.map((option) => `<label class="survey-choice"><input ${type === 'radio' ? 'required' : ''} type="${type}" name="${key}" value="${option}" /> <span>${option}</span><b>${type === 'radio' ? '✓' : ''}</b></label>`).join(''); return `<fieldset><legend>${title}</legend><p class="question-help">${help}</p><div class="survey-choices">${control}</div></fieldset>`; }).join(''); }
 $('survey-question-fields').addEventListener('input', (event) => { if (!event.target.matches('input[type="range"][data-distance-values]')) return; const values = event.target.dataset.distanceValues.split(','); const value = values[Number(event.target.value)]; event.target.parentElement.querySelector('output').textContent = formatDistance(value); event.target.parentElement.querySelector('input[type="hidden"]').value = value; });
 $('survey-form').addEventListener('change', (event) => { if (event.target.name === 'cuisine' && document.querySelectorAll('input[name="cuisine"]:checked').length > 2) event.target.checked = false; });
 $('survey-form').addEventListener('submit', async (event) => { event.preventDefault(); const availability = {}; document.querySelectorAll('[data-availability-date]').forEach((input) => { if (input.checked) (availability[input.dataset.availabilityDate] ||= []).push(input.value); }); const dates = Object.keys(availability); const times = [...new Set(Object.values(availability).flat())]; if (!dates.length || !times.length || !state.event?.publicToken) return; const origin = state.guestOrigin || {}; const answer = { dates, times, availability, cuisines:[...document.querySelectorAll('input[name="cuisine"]:checked')].map((input) => input.value), dietary:[...document.querySelectorAll('input[name="dietary"]:checked')].map((input) => input.value), distance:document.querySelector('input[name="distance"]:checked, input[type="hidden"][name="distance"]')?.value, vibe:document.querySelector('input[name="vibe"]:checked')?.value, price:document.querySelector('input[name="price"]:checked')?.value, origin_place_id:origin.place_id || null, origin_label:origin.label || null, origin_lat:origin.latitude ?? null, origin_lng:origin.longitude ?? null, respondent_token:localStorage.getItem('respondentToken') || crypto.randomUUID() }; localStorage.setItem('respondentToken', answer.respondent_token); const response = await fetch(`${API_BASE}/api/surveys/${state.event.publicToken}/responses`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(answer) }); if (response.status === 410) return showClosedSurvey((await response.json().catch(() => ({}))).detail); if (!response.ok) return alert('Could not save your response. Please try again.'); state.responses.push(answer); $('survey-form').classList.add('hidden'); $('survey-thanks').classList.remove('hidden'); updateResponseSummary(); });
@@ -187,7 +205,8 @@ $('run-agent').addEventListener('click', async () => {
     $('booking-handoff').classList.toggle('hidden', !bookingUrl);
     $('recommendations').innerHTML = `<article class="agent-answer"><div class="card-kicker">✦ / agent response</div><div>${formatAgentAnswer(answer)}</div></article>`;
   } catch (error) {
-    $('recommendations').innerHTML = `<p class="error-message">Could not reach the agent API. Start it with <code>PYTHONPATH=src uvicorn groupreservations.api:app --reload --port 8000</code>.<br /><small>${error.message}</small></p>`;
+    console.error('Recommendation request failed', error);
+    $('recommendations').innerHTML = '<p class="error-message">We could not reach the recommendation service. Please try again in a moment.</p>';
   } finally {
     button.disabled = false;
     button.innerHTML = 'Find our top 3 <span>✦</span>';

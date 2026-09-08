@@ -5,17 +5,26 @@ from __future__ import annotations
 import csv
 import io
 import json
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .opentable_mcp import run
 from .auth import verify_access_token
+from .agent_state import AgentState
 from .adapters.google_places import autocomplete_locations, get_location_details
-from .database import SurveyClosed, aggregate_survey, append_response, create_survey, create_user, export_responses, get_survey, init_db, set_survey_expiry, set_survey_revoked
+from .database import (
+    SurveyClosed,
+    aggregate_survey,
+    append_response,
+    create_survey,
+    create_user,
+    get_survey,
+    init_db,
+)
 from .config import settings
 
 app = FastAPI(title="Where Are We Eating? Agent API", version="0.1.0")
@@ -72,18 +81,20 @@ class SurveyRequest(BaseModel):
     location_place_id: str | None = Field(default=None, max_length=200)
     location_lat: float | None = Field(default=None, ge=-90, le=90)
     location_lng: float | None = Field(default=None, ge=-180, le=180)
-    # Left unset, the survey expires a grace day after its last candidate date.
+    # Optional override; when omitted the survey closes to new responses two
+    # days after creation
     expires_at: str | None = Field(default=None, max_length=40)
 
-
-class RevokeRequest(BaseModel):
-    revoked: bool
-
-
-class ExpirationRequest(BaseModel):
-    """A null `expires_at` clears the expiry so only revocation can close the survey."""
-
-    expires_at: str | None = Field(default=None, max_length=40)
+    @field_validator("expires_at")
+    @classmethod
+    def _validate_expires_at(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("expires_at must be an ISO 8601 timestamp") from exc
+        return value
 
 
 class SurveyResponseRequest(BaseModel):
@@ -168,6 +179,7 @@ def surveys(
         "id": survey["id"],
         "public_token": survey["public_token"],
         "share_url": share_url,
+        "expires_at": survey["expires_at"],
         "survey": survey,
     }
 
@@ -178,11 +190,7 @@ def survey(public_token: str) -> dict[str, object]:
     record = get_survey(public_token)
     if not record:
         raise HTTPException(status_code=404, detail="Survey not found")
-    # 410 rather than 404 so the guest UI can say "voting closed" instead of
-    # "not found" for a link that was legitimately shared and later closed.
-    if record["status"] != "active":
-        raise HTTPException(status_code=410, detail=f"Survey is {record['status']}")
-    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions", "status", "expires_at")}
+    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions", "expires_at", "is_open")}
 
 # records a guest's response to the survey
 @app.post("/api/surveys/{public_token}/responses")
@@ -210,6 +218,8 @@ def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[s
         raise HTTPException(status_code=410, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SurveyClosed as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
     return {"status": "ok", "response": response}
 
 
@@ -331,10 +341,23 @@ def _agent_prompt(payload: RecommendationRequest) -> str:
         "schedule": {"times_by_date": payload.availability},
         "responses": [response.model_dump(exclude_none=True) for response in payload.responses],
     }
+    response_count = report.get("response_count", len(payload.responses))
     return f"""Select the best restaurant options for this group event.
 
 Authoritative cleaned group report:
 {json.dumps(report, indent=2)}
+
+Survey evidence ID: {payload.survey_id or "unavailable"}. If any group
+context is missing, contradictory, or unclear during tool calls, use the
+survey_get_evidence tool with this ID before making a decision.
+
+PARTY SIZE
+This MVP has no separate party-size question. Treat the authoritative
+response_count ({response_count}) as the number of guests for reservation
+preparation: one submitted response means party size 1, five responses means
+party size 5. Never invent a placeholder party size. If response_count is 0,
+party size is unknown; do not prepare a booking URL or claim availability and
+end with a request for the organizer to provide the group size.
 
 Treat this report as authoritative. Do not recalculate votes or use disabled
 options. Treat schedule.times_by_date as authoritative: a time is valid only
@@ -352,11 +375,11 @@ disagreement. Surface every item in confidence.notes (for example a split on
 budget or dates) instead of papering over it. Higher confidence means you may
 state a group preference more directly.
 
-Use Google Places first and select one best restaurant, date, and time for the
-group. The agent owns this decision and must not ask the organizer to choose
-among tied dates or times. Then check availability for the strongest candidate.
-Keep two alternatives as short fallback options, but do not present them as an
-undecided top-three list. Keep the Google restaurant results even if
+Use Google Places first and select one best restaurant plus exactly two
+secondary fallback restaurants when at least three viable results exist. The
+agent owns this decision and must not ask the organizer to choose among tied
+dates or times. Hydrate all three, inspect each reservation path, and check
+availability for the primary. Keep the Google restaurant results even if
 availability fails. Explain which date, time, and preference signals drove the
 decision. Do not book anything until the organizer confirms.
 For the primary restaurant, preserve exact provider URLs in separate labeled fields:
@@ -364,7 +387,11 @@ Google Maps, restaurant website, and the generic booking link plus its
 provider. Prefer the restaurant website's explicit booking link; OpenTable is
 only one possible provider. Never fabricate a provider URL. A listing URL does
 not prove availability; report those as separate facts.
-Mention up to two alternatives briefly after the primary choice. End with this
+Format the answer compactly: no markdown tables, no duplicated decision
+summary, and no full response-by-response vote dump. Use this order: one-line
+confidence/tie note only when it affects the choice; primary recommendation
+with 3-5 key fit facts and exact links; up to two alternatives as one short
+paragraph each with the key tradeoff and booking link; then end with this
 confirmation request using the selected values and prepared booking URL:
 "Confirm reservation for your group of X at Y on DATE at TIME? [Confirm
 reservation](URL)". The link is a human confirmation handoff; never imply the
@@ -444,7 +471,13 @@ def recommendations(
         if not aggregate:
             raise HTTPException(status_code=404, detail="Survey not found")
         payload = _payload_from_aggregate(aggregate)
-    return {"status": "ok", "answer": run(_agent_prompt(payload), user_id=organizer_id)}
+    state = AgentState(
+        survey_id=payload.survey_id,
+        group_location=payload.location,
+    )
+    return {"status": "ok", "answer": run(
+        _agent_prompt(payload), user_id=organizer_id, state=state
+    )}
 
 
 @app.post("/api/surveys/{survey_id}/recommendations")

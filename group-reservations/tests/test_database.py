@@ -1,6 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from groupreservations import database
+from groupreservations.evidence import get_survey_evidence
 
 
 def test_concurrent_guest_submissions_are_independent(tmp_path):
@@ -102,6 +106,50 @@ def test_aggregate_exposes_all_tied_date_time_pairs(tmp_path):
     }
 
 
+def test_survey_defaults_to_a_two_day_response_window(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("expiry-organizer@example.com", "cognito-expiry-0")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04"], ["19:00"], {},
+    )
+    window = datetime.fromisoformat(survey["expires_at"]) - datetime.fromisoformat(survey["created_at"])
+    assert timedelta(days=1, hours=23) <= window <= timedelta(days=2, minutes=1)
+    assert survey["is_open"] is True
+
+
+def test_responses_after_expiry_are_rejected(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("expiry-organizer@example.com", "cognito-expiry-1")
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian", "Japanese"]}, expires_at=past,
+    )
+    assert database.get_survey(survey["public_token"])["is_open"] is False
+    with pytest.raises(database.SurveyClosed):
+        database.append_response(
+            survey["public_token"], "late-guest-token", ["2026-09-04"], ["19:00"],
+            {"cuisine": ["Italian"]},
+        )
+    assert database.aggregate_survey(survey["id"])["response_count"] == 0
+
+
+def test_responses_before_expiry_are_accepted(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("expiry-organizer@example.com", "cognito-expiry-2")
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian", "Japanese"]}, expires_at=future,
+    )
+    assert database.get_survey(survey["public_token"])["is_open"] is True
+    database.append_response(
+        survey["public_token"], "prompt-guest-token", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Japanese"]},
+    )
+    assert database.aggregate_survey(survey["id"])["response_count"] == 1
+
+
 def test_date_specific_time_slots_do_not_create_invalid_pairs(tmp_path):
     object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
     organizer = database.create_user("schedule-organizer@example.com", "cognito-schedule")
@@ -116,3 +164,23 @@ def test_date_specific_time_slots_do_not_create_invalid_pairs(tmp_path):
     stored = database.aggregate_survey(survey["id"])
     pairs = {(pair["date"], pair["time"]) for pair in stored["report"]["schedule"]["pair_leaders"]}
     assert pairs == {("2026-09-04", "18:00"), ("2026-09-11", "20:00")}
+
+
+def test_agent_evidence_tool_returns_summary_only_to_organizer(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("evidence@example.com", "cognito-evidence")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Clemente", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian"]},
+    )
+    database.append_response(
+        survey["public_token"], "evidence-guest-token", ["2026-09-04"], ["19:00"],
+        {"cuisine": ["Italian"]}, origin_label="Private address", origin_lat=1, origin_lng=2,
+    )
+
+    evidence = get_survey_evidence(survey["id"], organizer["id"])
+    assert evidence["success"] is True
+    assert evidence["schedule"]["times_by_date"] == {"2026-09-04": ["19:00"]}
+    assert evidence["preferences"]["cuisine"]["votes"] == {"Italian": 1}
+    assert "responses" not in evidence
+    assert get_survey_evidence(survey["id"], "another-organizer")["success"] is False

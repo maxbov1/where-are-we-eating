@@ -1,4 +1,4 @@
-"""Environment-backed configuration for local model and MCP development."""
+"""Environment-backed configuration for local agent development."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ class Settings:
         "GROUP_RESERVATIONS_MODEL_ID", "global.anthropic.claude-sonnet-4-6"
     )
     google_places_api_key: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
-    opentable_location: str = os.getenv("OPENTABLE_LOCATION", "San Francisco, CA")
     database_path: str = os.getenv(
         "GROUP_RESERVATIONS_DATABASE_PATH", ".local/group-reservations.sqlite3"
     )
