@@ -29,7 +29,7 @@ form.addEventListener('submit', async (event) => {
     localStorage.setItem('organizerEmail', email.value.trim());
     localStorage.setItem('organizerId', user.id);
     setMessage('Your place is saved. Opening the survey settings…');
-    window.location.assign('index.html?organizer=1');
+    window.location.assign('survey-creation.html');
   } catch (error) {
     setMessage(error instanceof Error ? error.message : 'Could not create organizer. Please try again.', true);
     submit.disabled = false;
