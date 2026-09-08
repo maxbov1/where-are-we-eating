@@ -1,15 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Libre+Baskerville:wght@400;700&family=Parisienne&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Allura&family=DM+Serif+Display:ital@0;1&family=Libre+Baskerville:wght@400;700&display=swap');
 
 :root { --ink: #51301f; --paper: #f9f0d8; --paper-shadow: #d7c295; --accent: #73422c; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; color: var(--ink); font-family: 'Libre Baskerville', Georgia, serif; }
 .supper-page { position: relative; display: grid; min-height: 100svh; overflow: hidden; background: #765832; }
 .dinner-scene { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(46, 27, 15, .12), rgba(46, 27, 15, 0) 48%), url('assets/supper-background.jpg') center / cover no-repeat; filter: saturate(.86) contrast(.98); }
-.paper-brand, .invitation { position: relative; z-index: 1; background-color: var(--paper); background-image: linear-gradient(rgba(123, 87, 42, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(123, 87, 42, .02) 1px, transparent 1px); background-size: 7px 7px; }
-.paper-brand { position: absolute; right: 0; top: 0; width: min(35vw, 508px); min-height: 31vh; display: grid; place-items: center; padding: 42px 32px 56px; border-radius: 0 0 0 64px; box-shadow: -10px 13px 22px rgba(47, 26, 12, .18); }
-.paper-brand::after { content: ''; position: absolute; inset: 0 0 16px 0; border-bottom: 4px dotted rgba(81, 48, 31, .62); border-radius: 0 0 0 64px; pointer-events: none; }
-.paper-brand p { margin: 0; font-family: 'Parisienne', cursive; font-size: clamp(64px, 9vw, 140px); line-height: .75; color: var(--ink); text-shadow: 0 1px 0 #fff8e6; }
-.invitation { align-self: center; justify-self: center; width: min(515px, calc(100% - 40px)); min-height: 325px; margin-top: 14vh; border: 5px dotted rgba(81, 48, 31, .72); outline: 2px solid rgba(255, 255, 255, .68); outline-offset: -12px; box-shadow: 0 12px 28px rgba(41, 23, 11, .25); }
+.invitation { position: relative; z-index: 1; background-color: var(--paper); background-image: linear-gradient(rgba(123, 87, 42, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(123, 87, 42, .02) 1px, transparent 1px); background-size: 7px 7px; }
+.invitation { align-self: center; justify-self: end; width: min(515px, calc(100% - 40px)); min-height: 325px; margin: 14vh 8% 0 0; border: 5px dotted rgba(81, 48, 31, .72); outline: 2px solid rgba(255, 255, 255, .68); outline-offset: -12px; box-shadow: 0 12px 28px rgba(41, 23, 11, .25); transform: translateY(82px); }
 .invitation-inner { display: grid; gap: 17px; padding: 43px 42px 34px; text-align: center; }
 .eyebrow { margin: 0; font-size: 10px; letter-spacing: .15em; text-transform: uppercase; opacity: .72; }
 h1 { margin: 0; font-family: 'DM Serif Display', Georgia, serif; font-size: clamp(36px, 4vw, 50px); font-weight: 400; letter-spacing: .02em; line-height: 1.08; }
@@ -24,5 +21,5 @@ button:disabled { cursor: wait; opacity: .72; transform: none; }
 .form-note, .form-message { min-height: 18px; margin: 2px 0 0; color: rgba(81, 48, 31, .78); font-size: 10px; line-height: 1.55; text-align: center; }
 .form-message:empty { display: none; }
 .form-message.error { color: #8b1f17; }
-@media (max-width: 700px) { .dinner-scene { background-position: 39% center; } .paper-brand { width: min(68vw, 400px); min-height: 20vh; padding: 35px 22px 43px; border-radius: 0 0 0 46px; } .paper-brand::after { border-radius: 0 0 0 46px; bottom: 11px; } .paper-brand p { font-size: clamp(58px, 17vw, 100px); } .invitation { align-self: end; margin: 0 0 34px; } .invitation-inner { padding: 34px 25px 27px; } }
+@media (max-width: 700px) { .dinner-scene { background-position: 39% center; } .invitation { align-self: end; justify-self: center; margin: 0 0 34px; transform: none; } .invitation-inner { padding: 34px 25px 27px; } }
 @media (max-width: 380px) { .invitation { width: calc(100% - 24px); } .invitation-inner { padding-left: 19px; padding-right: 19px; } h1 { font-size: 35px; } }
