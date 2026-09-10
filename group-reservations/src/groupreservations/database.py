@@ -310,13 +310,32 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
     ]
     pair_top = max((pair["votes"] for pair in pair_counts), default=0)
     pair_leaders = [pair for pair in pair_counts if pair["votes"] == pair_top]
+    recommended_pairs = sorted(
+        pair_counts,
+        key=lambda pair: (-pair["votes"], pair["date"], pair["time"]),
+    )
+    pair_consensus = (
+        "no responses" if not pair_counts or pair_top == 0
+        else "tie" if len(pair_leaders) > 1
+        else "unanimous" if pair_top == len(survey["responses"])
+        else "strong" if pair_top >= len(survey["responses"]) * 0.75
+        else "moderate" if pair_top >= len(survey["responses"]) * 0.5
+        else "split"
+    )
+    dietary_requirements = sorted({
+        value
+        for response in survey["responses"]
+        for value in response.get("dietary", [])
+        if value != "no restrictions"
+    })
 
     report = {
         "event": {"name": survey["event_name"], "location": survey["location"]},
         "response_count": len(survey["responses"]),
         "active_questions": list(survey["questions"]),
-        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "times_by_date": survey["availability"], "pair_leaders": pair_leaders, "date_consensus": consensus("dates"), "time_consensus": consensus("times")},
+        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "times_by_date": survey["availability"], "pair_leaders": pair_leaders, "recommended_pairs": recommended_pairs, "date_consensus": consensus("dates"), "time_consensus": consensus("times"), "pair_consensus": pair_consensus},
         "preferences": {key: {"leaders": leaders(key), "consensus": consensus(key), "votes": values} for key, values in summary.items() if key not in {"dates", "times"}},
+        "constraints": {"dietary_requirements": dietary_requirements},
         "preference_summary": summary,
         "confidence": confidence,
         "responses": [{key: value for key, value in response.items() if key not in {"respondent_user_id", "response_id"}} for response in survey["responses"]],

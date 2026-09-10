@@ -39,9 +39,23 @@ organizer and should use encrypted per-user session storage in production.
 - `opentable_mcp.py`: Bedrock-backed Strands agent and organizer-scoped browser
   reservation workflow. Google Places owns discovery; provider pages are
   inspected through explicit, verified browser candidates.
+- `reservation_browser.py`: serialized Playwright browser tools. After
+  candidate verification, `reservation_sweep` returns an unclassified map of
+  the rendered page and frames with DOM regions, accessibility evidence, and a
+  screenshot. Each returned surface receives a stable `workflow_id` and its
+  own Playwright page association; the agent carries that handle through
+  expansion, preparation, and interaction while the browser resolves the
+  underlying surface without cross-workflow navigation. The agent selects a region;
+  `reservation_expand` provides its detailed controls. `reservation_prepare`
+  then prepares an exact URL selected from that evidence. `reservation_operate` is the bounded convenience flow
+  for standard widgets. `reservation_act` is
+  the generic semantic action boundary for unfamiliar widgets: the agent picks
+  an observed label/action while the browser owns frame resolution, identity,
+  re-observation, and final-action safety.
 - `agent_state.py`: serializable invocation state and tool affordances shared by
-  the agent and browser layer. It records phase, blockers, current page, and
-  permitted next actions without exposing model chain-of-thought.
+  the agent and browser layer. It records phase, blockers, current page,
+  workflow state, structured recovery errors, and permitted next actions
+  without exposing model chain-of-thought.
 - `api.py`: FastAPI HTTP boundary accepting structured survey responses and
   invoking the agent. This boundary is deliberately portable to an AgentCore
   runtime later.

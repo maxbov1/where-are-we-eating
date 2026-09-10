@@ -22,9 +22,17 @@ _PHASES = {
     "google_places_details": "restaurant_hydration",
     "reservation_open": "reservation_scan",
     "reservation_scan_dom": "reservation_scan",
+    "reservation_sweep": "reservation_scan",
+    "reservation_expand": "reservation_inspection",
+    "reservation_observe": "reservation_inspection",
     "reservation_fill": "reservation_preparation",
     "reservation_click": "reservation_availability",
     "reservation_prepare": "reservation_preparation",
+    "reservation_continue": "reservation_availability",
+    "reservation_abandon": "reservation_preparation",
+    "reservation_prepare_handoff": "reservation_preparation",
+    "reservation_operate": "reservation_availability",
+    "reservation_act": "reservation_preparation",
     "reservation_close": "cleanup",
 }
 
@@ -87,6 +95,21 @@ def _summary(result: Any) -> dict[str, Any]:
             summary["evidence_ids"] = evidence_ids[:20]
         if source_urls:
             summary["source_urls"] = source_urls[:20]
+        for key in ("handoff_ready", "prefilled", "url_prefilled", "interactive_complete",
+                    "availability_verified", "workflow_id", "error_code", "recovery",
+                    "continuation_required", "final_action_blocked", "provider",
+                    "candidate_id", "booking_url", "prepared_booking_url"):
+            if key in payload:
+                summary[key] = _sanitize(payload[key], key)
+        action_trace = payload.get("action_trace")
+        if isinstance(action_trace, list):
+            summary["action_trace"] = [
+                {key: _sanitize(step.get(key), key)
+                 for key in ("step", "action", "success", "label", "control", "error")
+                 if key in step}
+                for step in action_trace[:20]
+                if isinstance(step, Mapping)
+            ]
     else:
         summary["preview"] = str(payload)[:240]
     return summary

@@ -140,6 +140,13 @@ gated.
 
 `tests/fixtures/san-clemente-dinner.json` contains one event and five guest
 response patterns with limited date/time crossover and dietary constraints.
+For a San Francisco run, use the parallel
+`tests/fixtures/san-francisco-dinner.json` fixture:
+
+```bash
+PYTHONPATH=src python scripts/run_fixture_flow.py tests/fixtures/san-francisco-dinner.json
+```
+
 Seed it, copy the printed `survey_id`, and inspect the
 cleaned vote summary:
 
@@ -228,10 +235,54 @@ date, time, and party size. The agent never derives a provider ID from a
 restaurant name.
 
 Booking discovery is intentionally decomposed into browser observations and
-actions. There is no all-in-one discovery tool: scan results carry a stable
-candidate ID, source URL, and action URL; `reservation_verify` must confirm the
-active page before further interaction. Failed operations move the explicit
-agent state into a failure phase with blockers and recovery actions.
+actions. There is no all-in-one discovery tool: sweep results carry a stable
+`workflow_id`, source URL, surface, and action URLs. The browser resolves the
+underlying surface from that handle and rejects stale or unobserved actions.
+Failed operations return an explicit error code and recovery tool, and move
+the workflow into a visible blocked state.
+
+The browser workflow begins with `reservation_sweep`, a compact, unclassified
+map of the rendered page grouped into forms, frames, dialogs, and sections.
+Each surface summarizes controls, links, bounds, DOM text, structural signals,
+the accessibility tree, and a screenshot. The agent chooses a surface from
+that evidence. `reservation_expand` then returns detailed DOM controls for
+the selected page or frame. This prevents a reservation keyword heuristic
+from hiding a widget before the agent can inspect it.
+
+Booking URLs are surface-scoped: skip links and accessibility controls are
+excluded, and a URL is authorized only when it belongs to a reservation-labeled
+control or form in the selected surface. A URL that merely appears elsewhere
+on the page cannot authorize a handoff.
+
+Each workflow retains its own browser page association. Navigation for one
+provider cannot replace the page being used by another workflow.
+
+The agent passes the same `workflow_id` to `reservation_expand`,
+`reservation_prepare`, and `reservation_act`. URL-prefill is recorded
+separately from live availability: a handoff is not complete until the agent
+selects the requested visible time after the provider returns its availability
+controls. For standard widgets, `reservation_continue` performs this bounded
+guest/date/search/time-slot sequence and stops before final booking; the agent
+uses `reservation_act` for unusual controls or recovery.
+
+Each selected workflow must resolve before finalization: it must either verify
+the requested availability or be explicitly marked abandoned with
+`reservation_abandon`. URL preparation alone never satisfies the completion
+gate.
+
+For the completion path, the agent expands each selected surface and calls
+`reservation_prepare` with an exact observed action URL. This deterministic
+tool prepares the date/time/party-size URL when the provider supports it, while
+preserving the workflow for interactive providers. A candidate whose provider
+cannot be inspected or operated is returned as a structured blocker so the
+agent can recover or select a replacement.
+
+When the provider requires interactive controls, the agent can use
+`reservation_act` with semantic labels from `reservation_observe` (`click` or
+`set`/`fill`/`select`). The browser resolves the verified page or frame, acts on
+native or custom controls, re-observes state, and blocks final continuation or
+booking. `reservation_operate` remains a convenience for standard flows; it is
+not required for unfamiliar widgets.
 
 ## Google Places Setup
 

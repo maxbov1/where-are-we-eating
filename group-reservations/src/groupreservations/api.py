@@ -255,9 +255,12 @@ end with a request for the organizer to provide the group size.
 
 Treat this report as authoritative. Do not recalculate votes or use disabled
 options. Treat schedule.times_by_date as authoritative: a time is valid only
-for the date where it is listed. When the report contains ties, still choose a concrete date, time,
-and restaurant. Use this tie-break order: (1) maximize the number of guests
-who can attend the date/time pair using schedule.pair_leaders, (2) prefer the
+for the date where it is listed. Treat schedule.recommended_pairs (and its
+pair_consensus) as the primary schedule recommendation; date_leaders and
+time_leaders are independent tallies and must not be combined as an exact pair.
+When the report contains ties, still choose a concrete date, time, and
+restaurant. Use this tie-break order: (1) maximize the number of guests
+who can attend the date/time pair using schedule.recommended_pairs, (2) prefer the
 pair with the strongest restaurant availability and preference fit, (3) prefer
 the strongest cuisine, budget, vibe, and distance fit, and (4) use the
 earliest date/time as the stable final fallback. State which rule settled the

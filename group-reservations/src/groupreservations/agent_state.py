@@ -22,7 +22,10 @@ class AgentState:
     scanned_candidates: dict[str, dict[str, Any]] = field(default_factory=dict)
     browser: dict[str, Any] = field(default_factory=dict)
     reservation: dict[str, Any] = field(default_factory=dict)
+    reservation_handoffs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    workflows: dict[str, dict[str, Any]] = field(default_factory=dict)
     verification: dict[str, Any] = field(default_factory=dict)
+    verifications: dict[str, dict[str, Any]] = field(default_factory=dict)
     available_actions: list[dict[str, str]] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
     last_error: str | None = None

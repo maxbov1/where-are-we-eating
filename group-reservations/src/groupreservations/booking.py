@@ -53,6 +53,13 @@ def classify_booking_provider(url: str, website_url: str | None = None) -> str:
 def _with_opentable_params(url: str, date: str, time: str, party_size: int) -> str:
     parts = urlsplit(url)
     params = dict(parse_qsl(parts.query, keep_blank_values=True))
+    restref = next((value for key, value in params.items() if key.casefold() == "restref"), None)
+    params = {
+        key: value for key, value in params.items()
+        if key.casefold() not in {"restref", "datetime", "partysize", "covers"}
+    }
+    if restref:
+        params["restref"] = restref
     params.update({"dateTime": f"{date}T{time}:00", "covers": str(party_size)})
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment))
 
@@ -71,6 +78,12 @@ def build_opentable_availability_url(
     a restaurant ID returned by OpenTable.  A restaurant name or slug is not a
     valid input: turning one into an ID would create a false booking path.
     """
+    input_kind = "numeric_restref" if isinstance(restaurant, int) or (isinstance(restaurant, str) and restaurant.isdigit()) else "verified_url"
+    logger.info(
+        "booking_url stage=build_start input_kind=%s source_url=%s date=%s time=%s party_size=%s",
+        input_kind, restaurant if isinstance(restaurant, str) else f"restref:{restaurant}",
+        date, time, party_size,
+    )
     if isinstance(restaurant, int) or (isinstance(restaurant, str) and restaurant.isdigit()):
         url = f"https://www.opentable.com/booking/restref/availability?restref={restaurant}"
     elif isinstance(restaurant, str) and urlsplit(restaurant).hostname:
@@ -87,14 +100,21 @@ def build_opentable_availability_url(
     # enough to identify the venue; no redirect or OpenTable page load is
     # needed. Keep its baked-in provider context while using the availability
     # route that accepts date/time parameters.
-    if parts.path.rstrip("/") == "/restref/client" and query.get("restref"):
+    restref = next((value for key, value in query.items() if key.casefold() == "restref"), None)
+    if parts.path.rstrip("/") == "/restref/client" and restref:
         url = urlunsplit(
             (parts.scheme, parts.netloc, "/booking/restref/availability", parts.query, parts.fragment)
         )
 
     if date is None or time is None or party_size is None:
+        logger.info("booking_url stage=build_complete provider=OpenTable prepared_url=%s prefilled=false", url)
         return url
-    return _with_opentable_params(url, date, time, party_size)
+    prepared = _with_opentable_params(url, date, time, party_size)
+    logger.info(
+        "booking_url stage=build_complete provider=OpenTable prepared_url=%s has_date_time=%s has_party_size=%s",
+        prepared, "dateTime=" in prepared, "covers=" in prepared,
+    )
+    return prepared
 
 
 def build_booking_handoff(

@@ -1,5 +1,6 @@
 import json
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -13,8 +14,10 @@ from groupreservations.reservation_browser import (
     ReservationBrowser,
     _candidate_id,
     _candidate_score,
+    _is_skip_control,
     _matches_location,
     _provider_identifiers,
+    _reservation_signal,
 )
 from groupreservations.adapters.google_places import _BookingLinkParser
 from groupreservations.models import Place
@@ -79,6 +82,19 @@ def test_opentable_restref_client_anchor_is_normalized_without_following_it():
     assert "dateTime=2026-09-04T20%3A00%3A00" in url
     assert "covers=4" in url
     assert url.count("?") == 1
+
+
+def test_opentable_restref_anchor_replaces_stale_prefill_aliases():
+    url = build_opentable_availability_url(
+        "https://www.opentable.com/booking/restref/availability?rid=255298&"
+        "restRef=255298&partySize=2&dateTime=2026-06-24T19%3A00",
+        date="2026-09-11", time="19:00", party_size=5,
+    )
+    assert "restref=255298" in url
+    assert "dateTime=2026-09-11T19%3A00%3A00" in url
+    assert "covers=5" in url
+    assert "partySize=2" not in url
+    assert "2026-06-24" not in url
 
 
 def test_opentable_widget_input_exposes_verified_restref_without_navigation():
@@ -203,6 +219,12 @@ class _FakeLocator:
     def evaluate_all(self, _script):
         return self.candidates
 
+    def inner_text(self):
+        return "Find a table"
+
+    def aria_snapshot(self, **_kwargs):
+        return '- button "Find a table"'
+
 
 class _FakeFrame:
     def __init__(self, url):
@@ -255,6 +277,9 @@ class _FakePage:
     def wait_for_timeout(self, _milliseconds):
         return None
 
+    def screenshot(self, path, **_kwargs):
+        Path(path).write_bytes(b"fake-png")
+
     def locator(self, _selector):
         return _FakeLocator(self.candidates)
 
@@ -263,8 +288,24 @@ def _fake_browser():
     browser = ReservationBrowser.__new__(ReservationBrowser)
     browser.page = _FakePage()
     browser.state = AgentState()
+    browser.profile_dir = Path(".test-reservation-browser")
     browser.owner_thread_id = threading.get_ident()
     return browser
+
+
+def test_browser_observe_returns_dom_and_accessibility_evidence(tmp_path):
+    browser = _fake_browser()
+    browser.profile_dir = tmp_path
+    scan = json.loads(browser.scan_dom(browser.page.url))
+    verified = json.loads(browser.verify(scan["candidate_id"], scan["url"]))
+
+    observed = json.loads(browser.observe(verified["candidate_id"], verified["url"]))
+
+    assert observed["success"] is True
+    assert observed["dom"]["text"] == "Find a table"
+    assert observed["accessibility_snapshot"] == '- button "Find a table"'
+    assert observed["screenshot_path"]
+    assert Path(observed["screenshot_path"]).exists()
 
 
 def test_browser_scan_and_verification_are_candidate_bound():
@@ -299,6 +340,53 @@ def test_browser_scan_and_verification_are_candidate_bound():
     assert prepared["success"] is True
     assert prepared["provider"] == "Toast"
     assert prepared["booking_url"] == scan["candidates"][0]["url"]
+
+
+def test_workflow_handle_resolves_to_surface_and_errors_are_recoverable():
+    browser = _fake_browser()
+    surface_id = "surface-1"
+    workflow_id = "workflow-1"
+    browser.state.workflows[workflow_id] = {
+        "workflow_id": workflow_id,
+        "surface_id": surface_id,
+    }
+    browser.state.scanned_candidates[surface_id] = {
+        "candidate_id": surface_id,
+        "url": browser.page.url,
+        "source_url": browser.page.url,
+        "workflow_id": workflow_id,
+    }
+    browser.state.verifications[surface_id] = {
+        "candidate_id": surface_id,
+        "url": browser.page.url,
+        "source_url": browser.page.url,
+        "verified": True,
+    }
+
+    assert browser._surface_id(workflow_id) == surface_id
+    assert browser._workflow_id(workflow_id) == workflow_id
+    assert browser._verified_target(workflow_id, browser.page.url) is browser.page
+
+    error = browser._structured_error(
+        workflow_id, browser.page.url, "ACTION_URL_NOT_AUTHORIZED",
+        "Booking URL was not observed in the selected surface.",
+        "reservation_expand", "Expand the selected surface and inspect action_urls.",
+    )
+    assert error["status"] == "blocked"
+    assert error["workflow_id"] == workflow_id
+    assert error["surface_id"] == surface_id
+    assert error["recovery"]["tool"] == "reservation_expand"
+
+
+def test_skip_and_unrelated_surface_controls_cannot_authorize_booking_urls():
+    skip = {"tag": "a", "label": "Skip to Main Content", "href": "https://www.opentable.com/r/wrong"}
+    unrelated = {"tag": "a", "label": "About Us", "href": "https://www.opentable.com/r/wrong"}
+    reservation = {"tag": "a", "label": "Reserve a Table", "href": "https://www.opentable.com/r/right"}
+
+    assert _is_skip_control(skip) is True
+    assert _candidate_score(skip, "https://restaurant.example/")[1] == "excluded"
+    assert _reservation_signal(unrelated) is False
+    assert _reservation_signal(reservation) is True
 
 
 def test_browser_verifies_and_targets_an_embedded_frame_without_navigation():

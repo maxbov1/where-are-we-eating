@@ -41,6 +41,11 @@ Turn the organizer's structured group preferences into a short, evidence-based
 restaurant recommendation and a safe reservation handoff. Explore the
 environment using the tools available to you. Choose the next useful action
 from each tool's returned `available_actions`; do not assume a fixed workflow.
+Success means returning exactly three Google-grounded restaurants, each with
+an exact verified reservation URL prepared for the selected date, time, and
+party size. Replace candidates whose provider cannot be deterministically
+prefilled. Do not stop at a reservation widget, scanned page, or generic
+booking link.
 
 RECOMMENDATION SHAPE
 - Always produce exactly three restaurant options when Google Places returns at
@@ -57,14 +62,50 @@ CONSTRAINTS
 - Every browser action must remain bound to the same candidate_id and URL. If
   verification fails, stop acting on that page and recover from the failure
   state.
-- `reservation_prepare`, `reservation_fill`, and `reservation_click` require a
-  successful `reservation_verify` for the same candidate_id and URL. The tools
-  reject calls that do not satisfy this precondition.
-- Use these signatures when needed: `reservation_prepare(candidate_id, url,
-  booking_url, date, time, party_size)`, `reservation_fill(candidate_id, url,
-  field, value)`, and `reservation_click(candidate_id, url, label)`.
-- `booking_url` must be an exact URL returned in the scan result for the same
-  verified page. There is no generic URL-preparation shortcut.
+- For every selected restaurant, call `reservation_sweep` on the exact Google
+  website URL first. This returns a compact set of deterministic interaction
+  surfaces grouped by form, frame, dialog, or page section. Choose a surface
+  from its heading, controls, links, frame URL, bounds, and structural signals;
+  do not expect one DOM node per candidate.
+- Call `reservation_expand` on the selected surface to obtain its detailed DOM,
+  accessibility tree, screenshot, and controls. Do not claim that a widget is
+  absent merely because a filtered scan found nothing.
+- If the expanded evidence contains an exact reservation URL, call
+  `reservation_prepare` with that observed URL and the selected date/time/
+  party size. URL parameters alone do not mean availability is selected. After
+  preparation, immediately open/resweep the prepared provider URL when one is
+  returned, or continue on the current widget. Use `reservation_act` to set
+  guest/date/time, click the availability/search control, then click the exact
+  requested available time. Expand again after every state transition. A
+  handoff is incomplete until the requested visible time has been selected.
+- Use these signatures when needed: `reservation_sweep(website_url)`,
+  `reservation_expand(workflow_id, url, include_screenshot)`,
+  `reservation_prepare(workflow_id, url, booking_url, date, time, party_size)`,
+  `reservation_continue(workflow_id, url, date, time, party_size, max_steps)`,
+  `reservation_act(workflow_id, url, action, target, value)` where action is
+  `click` or `set`/`fill`/`select`.
+- Treat `workflow_id` as the stable identity for one reservation attempt.
+  Pass it unchanged to every expand, prepare, and act call. The browser owns
+  the underlying surface ID, observation URL, and action URLs. If a tool
+  returns `status: blocked`, use its `error_code` and `recovery` object; do not
+  repeat the same action with a different guessed identifier.
+- For ordinary widgets, prefer `reservation_continue` after preparation. It
+  performs bounded guest/date/time/search/time-slot interaction and stops
+  before final booking. It may open and rebind the prepared provider page,
+  activate a hidden reservation panel, and re-observe after each transition.
+  If an OpenTable prepared URL cannot be opened, it automatically falls back
+  to the verified restaurant page and operates the observed embedded widget.
+  If it returns `REQUESTED_TIME_UNAVAILABLE`, do not claim the requested time;
+  report the observed alternatives or explicitly abandon the workflow. Use
+  `reservation_act` when the page needs an unusual control or when the bounded
+  flow reports a concrete blocker.
+- Every one of the three selected workflows must end as either
+  availability-verified or explicitly abandoned with `reservation_abandon`.
+  Do not finalize after preparing only one candidate.
+- The normal agent surface exposes a semantic browser controller, not raw
+  Playwright. The browser owns identity, frame resolution, evidence capture,
+  and safety gates; the agent owns candidate selection, recovery, and action
+  order.
 - When the organizer asks to check availability, that check is required before
   the final report. Do not stop after a scan merely because generic time slots
   are visible. Inspect the verified page, fill date/time/party-size fields,
@@ -90,11 +131,12 @@ CONSTRAINTS
   before preparing availability or booking links.
 - Before ending after browser use, close the browser.
 - A candidate may appear in the final report as a reservation option only if
-  its exact page or booking candidate was scanned. Otherwise label it
-  `not inspected`; do not claim that its reservation channel is unknown based
-  on an unscanned page. If a scan exposes a navigation action such as
-  `/general-4`, follow that exact action and scan the destination before
-  reporting the candidate's reservation options.
+  `reservation_prepare` returned an exact observed URL or
+  `reservation_act` returned success, or if the agent reports its
+  concrete blocker and replaces it with another Google candidate.
+  If a scan exposes a navigation action such as `/general-4`, the handoff tool
+  follows only exact observed actions; do not claim a generic or unverified
+  booking link.
 
 TERMINAL STATES
 1. `recommendation_ready`: hydrated candidates, tradeoffs, and exact
@@ -189,6 +231,57 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
         result = str(create_agent(
             browser_tools, create_evidence_tool(user_id), create_state_tool(state), trace
         )(prompt))
+        completed_handoffs = [handoff for handoff in state.reservation_handoffs.values()
+                              if handoff.get("availability_verified") or handoff.get("interactive_complete")]
+        abandoned_handoffs = [handoff for handoff in state.reservation_handoffs.values()
+                              if handoff.get("abandoned") or handoff.get("status") == "abandoned"]
+        resolved_handoffs = completed_handoffs + abandoned_handoffs
+        logger.info(
+            "agent stage=handoff_gate total=%d completed=%d ledger=%s",
+            len(state.reservation_handoffs), len(completed_handoffs),
+            json.dumps([
+                {
+                    "place_id": place_id,
+                    "restaurant_name": handoff.get("restaurant_name"),
+                    "candidate_id": handoff.get("candidate_id"),
+                    "provider": handoff.get("provider"),
+                    "url_prefilled": bool(handoff.get("url_prefilled") or handoff.get("prefilled")),
+                    "availability_verified": bool(handoff.get("availability_verified")),
+                    "interactive_complete": bool(handoff.get("interactive_complete")),
+                    "abandoned": bool(handoff.get("abandoned") or handoff.get("status") == "abandoned"),
+                    "last_action": handoff.get("last_action"),
+                    "failure": handoff.get("failure"),
+                }
+                for place_id, handoff in state.reservation_handoffs.items()
+            ], separators=(",", ":"), default=str),
+        )
+        required_handoffs = 3
+        if len(state.reservation_handoffs) < required_handoffs or len(resolved_handoffs) < required_handoffs:
+            missing = [handoff.get("restaurant_name", place_id)
+                       for place_id, handoff in state.reservation_handoffs.items()
+                       if not (handoff.get("availability_verified")
+                               or handoff.get("interactive_complete")
+                               or handoff.get("abandoned")
+                               or handoff.get("status") == "abandoned")]
+            state.phase = "recommendation_blocked"
+            state.status = "failed"
+            blocker = (
+                "Completion gate: fewer than three completed reservation handoffs "
+                f"({len(completed_handoffs)} complete, {len(abandoned_handoffs)} abandoned, "
+                f"{len(resolved_handoffs)}/{required_handoffs} resolved)."
+            )
+            if missing:
+                blocker += " Incomplete: " + ", ".join(str(name) for name in missing) + "."
+            logger.warning(
+                "agent stage=handoff_gate_blocked missing=%s blockers=%s",
+                json.dumps(missing, default=str), json.dumps(state.blockers[-5:], default=str),
+            )
+            state.blockers.append(blocker)
+            result = (
+                f"TERMINAL STATE: blocked\n\n{blocker}\n\n"
+                "The model draft below is not an authoritative success report.\n\n"
+                f"MODEL DRAFT:\n{result}"
+            )
         logger.info("agent stage=agent_complete result_chars=%d", len(result))
         return result
     finally:

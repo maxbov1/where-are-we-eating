@@ -104,6 +104,31 @@ def test_aggregate_exposes_all_tied_date_time_pairs(tmp_path):
     assert {(pair["date"], pair["time"]) for pair in pairs} == {
         ("2026-09-04", "18:00"), ("2026-09-11", "19:00")
     }
+    schedule = database.aggregate_survey(survey["id"])["report"]["schedule"]
+    assert schedule["pair_consensus"] == "tie"
+    assert schedule["recommended_pairs"][:2] == [
+        {"date": "2026-09-04", "time": "18:00", "votes": 1},
+        {"date": "2026-09-11", "time": "19:00", "votes": 1},
+    ]
+
+
+def test_aggregate_exposes_dietary_requirements_as_constraints(tmp_path):
+    object.__setattr__(database.settings, "database_path", str(tmp_path / "test.sqlite3"))
+    organizer = database.create_user("dietary-organizer@example.com", "cognito-dietary")
+    survey = database.create_survey(
+        organizer["id"], "Dinner", "San Francisco", ["2026-09-04"], ["19:00"],
+        {"dietary": ["vegan", "vegetarian", "gluten-free", "nut-free", "no restrictions"]},
+    )
+    database.append_response(
+        survey["public_token"], "dietary-guest-1", ["2026-09-04"], ["19:00"],
+        {"dietary": ["vegan"]},
+    )
+    database.append_response(
+        survey["public_token"], "dietary-guest-2", ["2026-09-04"], ["19:00"],
+        {"dietary": ["no restrictions"]},
+    )
+    report = database.aggregate_survey(survey["id"])["report"]
+    assert report["constraints"]["dietary_requirements"] == ["vegan"]
 
 
 def test_survey_defaults_to_a_two_day_response_window(tmp_path):

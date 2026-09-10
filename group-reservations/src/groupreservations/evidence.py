@@ -26,5 +26,6 @@ def get_survey_evidence(identifier: str, organizer_id: str) -> dict[str, Any]:
         "response_count": report["response_count"],
         "schedule": report["schedule"],
         "preferences": report["preferences"],
+        "constraints": report["constraints"],
         "confidence": report["confidence"],
     }
