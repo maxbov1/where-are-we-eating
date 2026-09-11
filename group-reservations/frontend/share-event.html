@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Supper — Invite the crew</title>
+    <link rel="stylesheet" href="share-event.css" />
+  </head>
+  <body>
+    <main class="share-page">
+      <section class="share-card" aria-labelledby="share-title">
+        <header class="share-header">
+          <div><p class="eyebrow">Your invitation is ready</p><h1 id="share-title">Bring the crew in.</h1><p class="intro" id="event-summary"></p></div>
+          <a href="survey-creation.html">Edit plan</a>
+        </header>
+        <div class="share-grid">
+          <section class="qr-panel"><div class="qr-frame"><img id="qr-code" alt="QR code for the group survey" /></div><p class="qr-label">Scan to vote</p></section>
+          <section class="share-actions" aria-label="Share options">
+            <div class="action-block"><label for="survey-link">Guest link</label><input id="survey-link" readonly /><button class="secondary-button" id="copy-link" type="button">Copy link</button></div>
+            <div class="action-block"><label for="share-message">Group chat message</label><textarea id="share-message" readonly rows="6"></textarea><button class="primary-button" id="copy-message" type="button">Copy message <span aria-hidden="true">→</span></button></div>
+            <p class="share-status" id="share-status" role="status" aria-live="polite"></p>
+          </section>
+        </div>
+        <p class="footer-note">Everyone can vote without creating an account. You can return here from this browser to reuse the invitation.</p>
+      </section>
+    </main>
+    <script src="vendor/qrcode.js"></script>
+    <script src="share-event.js"></script>
+  </body>
+</html>

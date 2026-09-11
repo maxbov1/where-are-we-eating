@@ -127,6 +127,13 @@ PYTHONPATH=src python scripts/seed_fixture.py
 PYTHONPATH=src python scripts/run_fixture_flow.py
 ```
 
+The root frontend URL opens the current organizer flow in `event-creation.html`,
+which continues to `survey-creation.html` after organizer setup. Creating an
+event then opens `share-event.html`, where the organizer can scan a QR code or
+copy the guest link and group-chat message. Existing guest invitation links
+remain compatible: `/?survey=<token>` is handled by the legacy guest response
+route in `index.html`.
+
 The agent exposes `google_places_search` and `google_places_details` first.
 Search returns hydrated canonical restaurant structs from Google Places before
 reservation checks. Restaurant websites and verified provider URLs are then
