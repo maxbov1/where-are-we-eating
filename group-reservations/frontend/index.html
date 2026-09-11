@@ -11,7 +11,7 @@
       // Kanishka's organizer flow the default application entrypoint.
       const routeParams = new URLSearchParams(window.location.search);
       if (!routeParams.has('survey')) {
-        window.location.replace(`event-creation.html${window.location.search}${window.location.hash}`);
+        window.location.replace(`landing.html${window.location.search}${window.location.hash}`);
       }
     </script>
   </head>
@@ -29,7 +29,6 @@
             <h2>Get the crew together.</h2>
             <label>Email address <input required type="email" id="organizer-email" placeholder="you@example.com" /></label>
             <button class="button primary" type="submit">Start an event <span>→</span></button>
-            <p class="fine-print">No guest accounts. No group-chat archaeology.</p>
           </form>
         </section>
 
@@ -102,7 +101,7 @@
 
         <section class="screen" id="survey-screen" aria-labelledby="survey-title">
           <div class="survey-wrap">
-            <div class="survey-brand">✳ where are we eating?</div>
+            <div class="survey-brand">where are we eating?</div>
             <div class="survey-progress"><span></span></div>
             <div class="survey-intro"><p class="eyebrow">A little help from the whole table</p><h1 id="survey-title">Help pick <em>Friday dinner.</em></h1><p id="survey-location">San Francisco · about 30 seconds · no sign-up</p></div>
             <form class="survey-form" id="survey-form">
