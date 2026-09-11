@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Supper — Set the vibe</title>
+    <link rel="stylesheet" href="survey-creation.css" />
+  </head>
+  <body>
+    <main class="builder-page">
+      <form class="builder-card" id="event-form">
+        <header class="builder-header"><p class="eyebrow">Set the vibe</p><h1>Where at?</h1><a href="event-creation.html">Start over</a></header>
+        <label>Event name<input required id="event-name" value="Friday dinner" /></label>
+        <label>City<div class="location-picker"><input required minlength="2" maxlength="160" id="event-location" placeholder="Start typing a city…" autocomplete="off" /><div class="location-menu hidden" id="organizer-location-menu" role="listbox"></div></div><small>Choose a suggested city. This becomes the broad restaurant search area.</small><small class="location-status" id="location-status" aria-live="polite"></small></label>
+        <div class="field-label">Set the times for each date</div>
+        <div class="schedule-editor" id="schedule-editor"></div>
+        <label>Close responses after<select id="event-expiry"><option value="2">2 days (default)</option><option value="3">3 days</option><option value="7">1 week</option><option value="14">2 weeks</option></select><small>Guests can’t respond after this. You can still view results.</small></label>
+        <div class="field-label">What should everyone weigh in on?</div>
+        <div class="topic-list" id="question-topics"></div>
+        <div class="question-drawer hidden" id="question-drawer"><div class="drawer-panel"><button class="drawer-close" type="button" data-close-question>×</button><p class="eyebrow">What guests see</p><h2 id="question-drawer-title">Edit question</h2><p>Turn choices on or off. Guests only see the ones you leave active.</p><div id="question-options"></div><button class="done-button" type="button" data-close-question>Done</button></div></div>
+        <button class="submit-button" type="submit">Generate share link <span>→</span></button>
+        <p class="builder-message" id="builder-message" role="status" aria-live="polite"></p>
+      </form>
+    </main>
+    <script src="survey-creation.js"></script>
+  </body>
+</html>

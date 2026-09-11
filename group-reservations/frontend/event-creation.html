@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Supper — Get the crew together</title>
+    <meta name="description" content="Start a dinner plan with the people you love." />
+    <link rel="stylesheet" href="event-creation.css" />
+  </head>
+  <body>
+    <main class="supper-page">
+      <div class="dinner-scene" aria-hidden="true"></div>
+      <section class="invitation" aria-labelledby="event-creation-title">
+        <div class="invitation-inner">
+          <p class="eyebrow">A table is better shared</p>
+          <h1 id="event-creation-title">Get The Crew Together</h1>
+          <p class="intro">Choose the date, gather the answers, and let the evening begin.</p>
+          <form id="signup-form" novalidate>
+            <label for="organizer-email">Your email address</label>
+            <input id="organizer-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+            <button type="submit">Start planning <span aria-hidden="true">→</span></button>
+            <p class="form-note">We’ll use this only to keep your supper plans together.</p>
+            <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+    </main>
+    <script src="event-creation.js"></script>
+  </body>
+</html>
