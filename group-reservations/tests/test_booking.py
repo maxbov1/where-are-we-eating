@@ -286,7 +286,14 @@ class _FakePage:
 
 def _fake_browser():
     browser = ReservationBrowser.__new__(ReservationBrowser)
+    # Keep this lightweight fixture aligned with ReservationBrowser.__init__.
+    # The browser tests run on the owner thread, so no Playwright runtime or
+    # executor is needed, but the isolated workflow maps must exist.
+    browser.playwright = None
+    browser.browser = None
     browser.page = _FakePage()
+    browser.candidate_pages = {}
+    browser.workflow_pages = {}
     browser.state = AgentState()
     browser.profile_dir = Path(".test-reservation-browser")
     browser.owner_thread_id = threading.get_ident()
