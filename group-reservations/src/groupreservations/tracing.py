@@ -37,6 +37,15 @@ _PHASES = {
 }
 
 
+def _approx_tokens(value: Any) -> int:
+    """Estimate tokens for diagnostics without depending on model-specific tokenizers."""
+    try:
+        chars = len(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        chars = len(str(value))
+    return max(1, (chars + 3) // 4)
+
+
 def _safe_url(value: str) -> str:
     parts = urlsplit(value)
     if not parts.scheme or not parts.netloc:
@@ -121,6 +130,12 @@ class AgentTrace:
     def __init__(self, organizer_id: str) -> None:
         self.organizer_id = organizer_id
         self.previous_state: dict[str, Any] = {}
+        self.token_stats = {
+            "tool_calls": 0,
+            "estimated_agent_output_tokens": 0,
+            "estimated_tool_context_tokens": 0,
+            "largest_tool_context_tokens": 0,
+        }
         # Debug mode should be sufficient to explain a stuck run. TRACE can be
         # enabled independently when callers want structured events without
         # the rest of the verbose logs.
@@ -134,6 +149,9 @@ class AgentTrace:
 
     def before_tool(self, event: BeforeToolCallEvent) -> None:
         tool = event.tool_use.get("name", "unknown")
+        argument_tokens = _approx_tokens(event.tool_use.get("input", {}))
+        self.token_stats["tool_calls"] += 1
+        self.token_stats["estimated_agent_output_tokens"] += argument_tokens
         self._emit({
             "phase": _PHASES.get(tool, "agent_reasoning"),
             "tool": tool,
@@ -144,6 +162,11 @@ class AgentTrace:
 
     def after_tool(self, event: AfterToolCallEvent) -> None:
         tool = event.tool_use.get("name", "unknown")
+        context_tokens = _approx_tokens(event.result)
+        self.token_stats["estimated_tool_context_tokens"] += context_tokens
+        self.token_stats["largest_tool_context_tokens"] = max(
+            self.token_stats["largest_tool_context_tokens"], context_tokens
+        )
         result = _summary(event.result)
         state_changes = {key: result[key] for key in ("success", "status", "evidence_ids", "source_urls") if key in result}
         self._emit({
@@ -165,6 +188,7 @@ class AgentTrace:
             "transition_reason": "agent invocation ended",
             "state_changes": {},
             "final_status": status,
+            "token_estimate": self.token_stats,
         })
 
     def attach(self, agent: Any) -> None:

@@ -138,7 +138,7 @@ $('run-agent').addEventListener('click', async () => {
   $('recommendations').innerHTML = '<p class="response-summary">Google Places is finding and hydrating candidates. OpenTable availability will be checked next.</p>';
   try {
     const response = await fetch(`${API_BASE}/api/surveys/${state.event.surveyId}/recommendations`, { method:'POST', headers:{'Content-Type':'application/json','X-Organizer-Id':state.organizerId || 'local-organizer'} });
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || 'Agent request failed');
     const answer = data.answer || '';
     const bookingUrl = findBookingUrl(answer);
@@ -147,7 +147,8 @@ $('run-agent').addEventListener('click', async () => {
     $('recommendations').innerHTML = `<article class="agent-answer"><div class="card-kicker">✦ / agent response</div><div>${formatAgentAnswer(answer)}</div></article>`;
   } catch (error) {
     console.error('Recommendation request failed', error);
-    $('recommendations').innerHTML = '<p class="error-message">We could not reach the recommendation service. Please try again in a moment.</p>';
+    const message = error instanceof Error ? error.message : 'We could not reach the recommendation service. Please try again in a moment.';
+    $('recommendations').innerHTML = `<p class="error-message">${escapeHtml(message)}</p>`;
   } finally {
     button.disabled = false;
     button.innerHTML = 'Find our top 3 <span>✦</span>';
@@ -167,4 +168,5 @@ function findBookingUrl(value) {
 }
 
 async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, dates:survey.dates, times:survey.times, availability:survey.availability, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href, expiresAt:survey.expires_at, isOpen:survey.is_open !== false }; if (survey.is_open === false) { $('survey-title').innerHTML = `Help pick <em>${survey.event_name}.</em>`; show('survey'); $('survey-form').classList.add('hidden'); $('survey-closed').classList.remove('hidden'); return; } prepareSurvey(); show('survey'); }
-loadPublicSurvey();
+const openOrganizerSettings = new URLSearchParams(location.search).get('organizer') === '1' && state.organizerId;
+if (openOrganizerSettings) { hydrateDates(); show('organizer'); } else loadPublicSurvey();

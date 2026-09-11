@@ -270,6 +270,13 @@ the requested availability or be explicitly marked abandoned with
 `reservation_abandon`. URL preparation alone never satisfies the completion
 gate.
 
+Model payloads are deliberately compact: screenshots remain available as local
+evidence but are not attached to ordinary sweep/expand/continue results,
+repeated page text and accessibility snapshots are bounded, and each run logs
+an approximate token lower bound plus the largest tool result. The estimate is
+diagnostic rather than provider billing data because model providers resend
+conversation history on each turn.
+
 For the completion path, the agent expands each selected surface and calls
 `reservation_prepare` with an exact observed action URL. This deterministic
 tool prepares the date/time/party-size URL when the provider supports it, while

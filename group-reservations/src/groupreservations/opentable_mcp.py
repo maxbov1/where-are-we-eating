@@ -219,6 +219,12 @@ def configuration_status() -> dict[str, str | bool]:
 def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | None = None) -> str:
     """Run one organizer prompt with local browser reservation handoffs."""
     logger.info("agent stage=run_start user_id=%s prompt_chars=%d", user_id, len(prompt))
+    estimated_prompt_tokens = (len(SYSTEM_PROMPT) + len(prompt) + 3) // 4
+    logger.info(
+        "agent stage=token_baseline system_prompt_chars=%d prompt_chars=%d "
+        "estimated_initial_input_tokens=%d",
+        len(SYSTEM_PROMPT), len(prompt), estimated_prompt_tokens,
+    )
     state = state or AgentState()
     browser, browser_tools = create_reservation_browser_tools(user_id, state)
     trace = AgentTrace(user_id)
@@ -231,6 +237,18 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
         result = str(create_agent(
             browser_tools, create_evidence_tool(user_id), create_state_tool(state), trace
         )(prompt))
+        stats = trace.token_stats
+        # The model provider resends conversation history on each turn, so
+        # this is a lower bound rather than a billing-grade total.
+        estimated_input = estimated_prompt_tokens + int(stats["estimated_tool_context_tokens"])
+        estimated_output = int(stats["estimated_agent_output_tokens"])
+        estimated_cost = (estimated_input * 3 + estimated_output * 15) / 1_000_000
+        logger.info(
+            "agent stage=token_estimate_lower_bound tool_calls=%d estimated_input_tokens=%d "
+            "estimated_output_tokens=%d largest_tool_context_tokens=%d estimated_cost_usd=%.6f",
+            stats["tool_calls"], estimated_input, estimated_output,
+            stats["largest_tool_context_tokens"], estimated_cost,
+        )
         completed_handoffs = [handoff for handoff in state.reservation_handoffs.values()
                               if handoff.get("availability_verified") or handoff.get("interactive_complete")]
         abandoned_handoffs = [handoff for handoff in state.reservation_handoffs.values()

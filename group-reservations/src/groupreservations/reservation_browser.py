@@ -584,7 +584,7 @@ class ReservationBrowser:
                 "controls": [{"region_id": item.get("candidate_id"), "tag": item.get("tag"),
                               "role": item.get("role"), "label": item.get("label"),
                               "visible": item.get("visible"), "href": item.get("href")}
-                             for item in controls[:24]],
+                             for item in controls[:12]],
                 "action_urls": action_urls,
                 "action_url_evidence": action_url_evidence[:20],
                 "region_ids": [item.get("candidate_id") for item in members[:80]],
@@ -656,20 +656,30 @@ class ReservationBrowser:
         self._log("page_sweep_complete", url=page.url, page_id=id(page),
                   region_count=len(regions), surface_count=len(surfaces), frame_count=len(frame_map),
                   workflow_ids=[str(item.get("workflow_id")) for item in surfaces])
+        model_surfaces = []
+        for surface in surfaces:
+            view = {key: value for key, value in surface.items() if key != "region_ids"}
+            view["action_url_evidence"] = [
+                {key: evidence.get(key) for key in ("url", "tag", "label")}
+                for evidence in surface.get("action_url_evidence", [])[:8]
+            ]
+            model_surfaces.append(view)
         return self._response({
             "success": True, "url": page.url, "candidate_id": _candidate_id(page.url),
             "candidate": {"candidate_id": _candidate_id(page.url), "url": page.url},
-            "surfaces": surfaces, "frames": frame_map,
+            "surfaces": model_surfaces, "frames": frame_map,
             "region_count": len(regions),
-            "text": " ".join(page.locator("body").inner_text().split())[:10000],
-            "accessibility_snapshot": ax_snapshot,
+            # The model needs surface labels and controls here; the full page
+            # text/AX tree is redundant with reservation_expand.
+            "text": " ".join(page.locator("body").inner_text().split())[:1500],
+            "accessibility_snapshot": str(ax_snapshot or "")[:1200],
             "screenshot_path": screenshot_path,
         }, (("reservation_expand", "Expand an agent-selected page or frame region"),
             ("reservation_sweep", "Repeat the complete page sweep after loading changes"),
             ("reservation_close", "End the browser session")),
             phase="reservation_scan", reason="complete rendered page sweep")
 
-    def expand(self, surface_id: str, url: str, include_screenshot: bool = True) -> str:
+    def expand(self, surface_id: str, url: str, include_screenshot: bool = False) -> str:
         """Expand an agent-selected sweep region into detailed evidence."""
         return self._run_on_browser_thread(self._observe_impl, surface_id, url, include_screenshot)
 
@@ -930,7 +940,7 @@ class ReservationBrowser:
 
         self._log("observation_start", candidate_id=candidate_id, url=url)
         controls = target.locator("input, select, textarea, button, a, [role], iframe, form").evaluate_all(
-            """els => els.slice(0, 120).map(el => ({
+            """els => els.slice(0, 60).map(el => ({
                 tag: el.tagName.toLowerCase(), type: el.type || null,
                 name: el.name || null, id: el.id || null,
                 href: el.href || null, placeholder: el.placeholder || null,
@@ -941,7 +951,7 @@ class ReservationBrowser:
         )
         dom = {
             "url": url,
-            "text": " ".join(target.locator("body").inner_text().split())[:6000],
+            "text": " ".join(target.locator("body").inner_text().split())[:3000],
             "controls": controls,
         }
         ax_snapshot = None
@@ -981,7 +991,7 @@ class ReservationBrowser:
             "candidate": {"candidate_id": candidate_id, "url": url},
             "url": url,
             "dom": dom,
-            "accessibility_snapshot": ax_snapshot,
+            "accessibility_snapshot": str(ax_snapshot or "")[:3000],
             "screenshot_path": screenshot_path,
             "warnings": warnings,
             }, (("reservation_fill", "Fill an identified non-sensitive booking field"),
@@ -1441,9 +1451,9 @@ class ReservationBrowser:
                 return {
                     "after": action,
                     "url": getattr(target, "url", url),
-                    "text": body[:500],
+                    "text": body[:300],
                     "control_count": target.locator(_INTERACTIVE_SELECTOR).count(),
-                    "accessibility": str(page_target.locator("body").aria_snapshot(timeout=1_000) or "")[:1200],
+                    "accessibility": str(page_target.locator("body").aria_snapshot(timeout=1_000) or "")[:600],
                 }
             except Exception as exc:
                 return {"after": action, "observation_error": str(exc)[:240]}
@@ -1547,7 +1557,7 @@ class ReservationBrowser:
             selected = self._select_availability_time(time, target)
             record("select_available_time", bool(selected.get("selected")), **selected)
 
-        observation = json.loads(self._observe_impl(candidate_id, url, include_screenshot=True))
+        observation = json.loads(self._observe_impl(candidate_id, url, include_screenshot=False))
         result = {
             "success": any(item["action"] == "select_available_time" and item["success"] for item in trace),
             "candidate_id": candidate_id,
@@ -1718,7 +1728,7 @@ class ReservationBrowser:
                 ("reservation_close", "End the browser session")),
                 phase="reservation_preparation", reason="reservation candidate verification failed")
 
-        observation = json.loads(self._observe_impl(candidate_id, candidate_url, include_screenshot=True))
+        observation = json.loads(self._observe_impl(candidate_id, candidate_url, include_screenshot=False))
         booking_url = str(candidate.get("opentableUrl") or candidate_url)
         provider = classify_booking_provider(booking_url, self.page.url if self.page else restaurant_url)
         prepared_url = booking_url
@@ -1955,7 +1965,7 @@ def create_reservation_browser_tools(user_id: str, state: AgentState | None = No
         return browser.verify(candidate_id, url)
 
     @tool
-    def reservation_observe(candidate_id: str, url: str, include_screenshot: bool = True) -> dict[str, object]:
+    def reservation_observe(candidate_id: str, url: str, include_screenshot: bool = False) -> dict[str, object]:
         """Observe a verified candidate with DOM, accessibility-tree, and optional screenshot evidence."""
         result = json.loads(browser.observe(candidate_id, url, include_screenshot))
         content: list[dict[str, object]] = [{"text": json.dumps(result, default=str)}]
@@ -1973,21 +1983,17 @@ def create_reservation_browser_tools(user_id: str, state: AgentState | None = No
     def reservation_sweep(website_url: str = "") -> dict[str, object]:
         """Sweep the complete rendered page and frames without classifying booking candidates."""
         result = json.loads(browser.sweep(website_url))
-        content: list[dict[str, object]] = [{"text": json.dumps(result, default=str)}]
-        screenshot = _model_screenshot(result.get("screenshot_path"))
-        if screenshot:
-            content.append(screenshot)
-        return {"status": "success", "content": content}
+        # Screenshots remain on disk as evidence, but are not sent on every
+        # sweep. They are expensive model input and rarely add information to
+        # the structured surface map.
+        return {"status": "success", "content": [{"text": json.dumps(result, default=str)}]}
 
     @tool
     def reservation_expand(workflow_id: str, url: str,
-                           include_screenshot: bool = True) -> dict[str, object]:
+                           include_screenshot: bool = False) -> dict[str, object]:
         """Expand one agent-selected surface with DOM, AX, and screenshot evidence."""
         result = json.loads(browser.expand(workflow_id, url, include_screenshot))
         content: list[dict[str, object]] = [{"text": json.dumps(result, default=str)}]
-        screenshot = _model_screenshot(result.get("screenshot_path"))
-        if screenshot:
-            content.append(screenshot)
         return {"status": "success", "content": content}
 
     @tool
@@ -2020,9 +2026,6 @@ def create_reservation_browser_tools(user_id: str, state: AgentState | None = No
             workflow_id, url, date, time, party_size, max_steps
         ))
         content: list[dict[str, object]] = [{"text": json.dumps(result, default=str)}]
-        screenshot = _model_screenshot(result.get("screenshot_path"))
-        if screenshot:
-            content.append(screenshot)
         return {"status": "success", "content": content}
 
     @tool
@@ -2039,9 +2042,6 @@ def create_reservation_browser_tools(user_id: str, state: AgentState | None = No
             place_id, restaurant_name, restaurant_url, date, time, party_size
         ))
         content: list[dict[str, object]] = [{"text": json.dumps(result, default=str)}]
-        screenshot = _model_screenshot(result.get("screenshot_path"))
-        if screenshot:
-            content.append(screenshot)
         return {"status": "success", "content": content}
 
     @tool
@@ -2050,9 +2050,6 @@ def create_reservation_browser_tools(user_id: str, state: AgentState | None = No
         """Run bounded semantic reservation actions without final booking or continuation."""
         result = json.loads(browser.operate(candidate_id, url, date, time, party_size, max_steps))
         content: list[dict[str, object]] = [{"text": json.dumps(result, default=str)}]
-        screenshot = _model_screenshot(result.get("screenshot_path"))
-        if screenshot:
-            content.append(screenshot)
         return {"status": "success", "content": content}
 
     @tool
