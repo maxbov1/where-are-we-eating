@@ -10,7 +10,9 @@
       // Keep guest invitations on the compatibility route while making
       // Kanishka's organizer flow the default application entrypoint.
       const routeParams = new URLSearchParams(window.location.search);
-      if (!routeParams.has('survey')) {
+      if (routeParams.has('survey')) {
+        window.location.replace(`guest-survey.html${window.location.search}${window.location.hash}`);
+      } else {
         window.location.replace(`landing.html${window.location.search}${window.location.hash}`);
       }
     </script>

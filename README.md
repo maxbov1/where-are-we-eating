@@ -29,7 +29,7 @@ The local frontend now sends its structured survey payload to the agent API.
 SQLite mirrors the production model: Cognito-sub keyed organizers, hashed
 anonymous guest tokens, normalized questions/options, independent responses,
 and deterministic aggregation. Production deployment adds Cognito, Aurora
-PostgreSQL, and SMS delivery. See [POC_PLAN.md](POC_PLAN.md).
+PostgreSQL, and SMS delivery. See [POC_PLAN.md](group-reservations/POC_PLAN.md).
 
 ## MVP flow
 
@@ -75,16 +75,22 @@ PostgreSQL, and SMS delivery. See [POC_PLAN.md](POC_PLAN.md).
    Secrets Manager, AgentCore deployment, and an async job/status path for
    recommendation runs.
 
-See [MIGRATION.md](MIGRATION.md) for what should move from HungryRadar and
-[ARCHITECTURE.md](ARCHITECTURE.md) for the proposed seams.
+See [MIGRATION.md](group-reservations/MIGRATION.md) for what should move from HungryRadar and
+[ARCHITECTURE.md](group-reservations/ARCHITECTURE.md) for the proposed seams.
 
 The first copied foundation lives under `src/groupreservations/`. It is an
 independent copy: HungryRadar remains unchanged and the new package does not
 import from it.
 
-See [POC_PLAN.md](POC_PLAN.md) for the sprint plan and demo target.
+See [POC_PLAN.md](group-reservations/POC_PLAN.md) for the sprint plan and demo target.
 
 ## Quick Start
+
+The POC lives in `group-reservations/`. Run the following commands from that directory:
+
+```bash
+cd group-reservations
+```
 
 The POC uses Google Places for restaurant discovery and canonical restaurant
 details. Restaurant websites and verified provider URLs are inspected through
@@ -433,8 +439,8 @@ src/groupreservations/
 
 ## Documentation Map
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): components, data flow, and security.
-- [CONTRIBUTING.md](CONTRIBUTING.md): developer setup and checks.
-- [POC_PLAN.md](POC_PLAN.md): sprint plan and demo target.
-- [MIGRATION.md](MIGRATION.md): copied HungryRadar foundation and boundaries.
-- [AGENTS.md](AGENTS.md): repository constraints for coding agents.
+- [ARCHITECTURE.md](group-reservations/ARCHITECTURE.md): components, data flow, and security.
+- [CONTRIBUTING.md](group-reservations/CONTRIBUTING.md): developer setup and checks.
+- [POC_PLAN.md](group-reservations/POC_PLAN.md): sprint plan and demo target.
+- [MIGRATION.md](group-reservations/MIGRATION.md): copied HungryRadar foundation and boundaries.
+- [AGENTS.md](group-reservations/AGENTS.md): repository constraints for coding agents.

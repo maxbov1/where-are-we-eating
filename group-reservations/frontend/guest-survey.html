@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Where Are We Eating? — Vote</title>
+    <meta name="description" content="Help your group choose a dinner plan." />
+    <link rel="stylesheet" href="guest-survey.css" />
+  </head>
+  <body>
+    <main class="guest-page">
+      <div class="guest-shell">
+        <header class="guest-header">
+          <p class="wordmark">where are we eating?</p>
+          <p class="eyebrow">A little help from the whole table</p>
+          <h1 id="survey-title">Help pick <em>dinner.</em></h1>
+          <p class="survey-location" id="survey-location">Loading your invitation…</p>
+        </header>
+
+        <form class="guest-form" id="survey-form">
+          <fieldset class="question-card">
+            <legend>When works?</legend>
+            <p class="question-help">Pick every date and time that works for you.</p>
+            <div class="survey-choices" id="survey-schedule"></div>
+          </fieldset>
+
+          <fieldset class="question-card">
+            <legend>Where are you coming from?</legend>
+            <p class="question-help">Optional. A neighborhood or landmark helps us balance travel.</p>
+            <div class="location-picker">
+              <label class="sr-only" for="guest-origin">Neighborhood or nearby place</label>
+              <input id="guest-origin" minlength="2" maxlength="160" autocomplete="street-address" placeholder="e.g. Mission District or SFO" />
+              <div class="location-menu hidden" id="guest-origin-menu" role="listbox"></div>
+            </div>
+            <p class="field-status" id="location-status" role="status" aria-live="polite"></p>
+          </fieldset>
+
+          <div id="survey-question-fields"></div>
+          <p class="form-error" id="form-error" role="alert"></p>
+          <button class="submit-button" type="submit">Send my picks <span aria-hidden="true">→</span></button>
+        </form>
+
+        <section class="thanks hidden" id="survey-thanks" aria-live="polite">
+          <div class="thanks-mark">✓</div>
+          <p class="eyebrow">You’re in</p>
+          <h2>Thanks for weighing in.</h2>
+          <p>The organizer will get the group’s best options soon.</p>
+          <a class="secondary-button" href="event-creation.html">Plan your own supper</a>
+        </section>
+
+        <section class="thanks hidden" id="survey-closed" aria-live="polite">
+          <div class="thanks-mark">⌛</div>
+          <p class="eyebrow">Voting has wrapped up</p>
+          <h2>This invitation is closed.</h2>
+          <p>The organizer is no longer accepting responses.</p>
+        </section>
+      </div>
+    </main>
+    <script src="guest-survey.js"></script>
+  </body>
+</html>
