@@ -234,7 +234,8 @@ class _FakeFrame:
 class _FakePage:
     def __init__(self):
         self.url = "https://restaurant.example/reservations"
-        self.frames = []
+        self.main_frame = self
+        self.frames = [_FakeFrame("https://tables.toasttab.com/restaurants/venue-7/findTime")]
         self.candidates = [{
             "tag": "iframe",
             "href": "https://tables.toasttab.com/restaurants/venue-7/findTime",
@@ -334,14 +335,15 @@ def test_browser_scan_and_verification_are_candidate_bound():
         "reservation_verify", "reservation_inspect"
     }
 
-    verified = json.loads(browser.verify(scan["candidate_id"], scan["url"]))
+    iframe = scan["candidates"][0]
+    verified = json.loads(browser.verify(iframe["candidate_id"], iframe["url"]))
 
     assert verified["success"] is True
     assert verified["verified"] is True
     assert browser.state.verification["verified"] is True
 
     prepared = json.loads(browser.prepare(
-        scan["candidate_id"], scan["url"], scan["candidates"][0]["url"],
+        iframe["candidate_id"], iframe["url"], iframe["url"],
         "2026-09-11", "19:00", 5,
     ))
     assert prepared["success"] is True
@@ -447,5 +449,7 @@ def test_browser_interactions_reject_unverified_candidate_state():
 
     assert fill_result["success"] is False
     assert click_result["success"] is False
-    assert "reservation_verify" in {item["tool"] for item in fill_result["available_actions"]}
+    assert {"reservation_open", "reservation_sweep"}.issubset(
+        {item["tool"] for item in fill_result["available_actions"]}
+    )
     assert browser.state.phase == "reservation_precondition_failure"

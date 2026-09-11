@@ -864,6 +864,12 @@ class ReservationBrowser:
                     "candidate_id": item["candidate_id"],
                     "url": item["url"],
                     "source_url": item["source_url"],
+                    "action_urls": [item["url"]],
+                    "action_url_evidence": [{
+                        "url": item["url"],
+                        "tag": item.get("tag", ""),
+                        "label": item.get("label", ""),
+                    }],
                     "label": item.get("label", ""),
                     "tag": item.get("tag", ""),
                     "score": item.get("score", 0),
