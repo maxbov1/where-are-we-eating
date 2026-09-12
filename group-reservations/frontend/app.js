@@ -1,14 +1,17 @@
-const state = { event: null, responses: [], organizerId: localStorage.getItem('organizerId'), guestOrigin: null };
+const state = { event: null, responses: [], organizerId: localStorage.getItem('organizerId'), guestOrigin: null, aggregate: null };
 const $ = (id) => document.getElementById(id);
 const screens = { signup: $('signup-screen'), organizer: $('organizer-screen'), survey: $('survey-screen') };
 const API_BASE = window.WAE_API_BASE || 'http://127.0.0.1:8000';
 
 function show(screen) { Object.values(screens).forEach((node) => node.classList.remove('active')); screens[screen].classList.add('active'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-function defaultDates() { const today = new Date(); const friday = new Date(today); friday.setDate(today.getDate() + ((5 - today.getDay() + 7) % 7 || 7)); return [0, 7, 14].map((offset) => { const date = new Date(friday); date.setDate(friday.getDate() + offset); return date.toISOString().slice(0, 10); }); }
+function defaultDates() { const today = new Date(); const friday = new Date(today); friday.setDate(today.getDate() + ((5 - today.getDay() + 7) % 7 || 7)); return [friday.toISOString().slice(0, 10)]; }
 function prettyDate(value) { return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(`${value}T12:00:00`)); }
 function prettyTime(value) { const [hours, minutes] = value.split(':'); return new Intl.DateTimeFormat('en-US', { hour:'numeric', minute:'2-digit' }).format(new Date(2000, 0, 1, Number(hours), Number(minutes))); }
 function prettyDateTime(value) { return new Intl.DateTimeFormat('en-US', { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(new Date(value)); }
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
+function recommendationCacheKey(event, responseCount) { return `recommendation:${event?.surveyId || 'unknown'}:${responseCount || 0}`; }
+function readRecommendationCache(event, responseCount) { try { const cached = JSON.parse(localStorage.getItem(recommendationCacheKey(event, responseCount)) || 'null'); return cached?.answer ? cached : null; } catch (error) { return null; } }
+function writeRecommendationCache(event, responseCount, result) { try { localStorage.setItem(recommendationCacheKey(event, responseCount), JSON.stringify({ answer:result.answer || '', actions:result.response?.actions || [], fallback:Boolean(result.fallback) })); } catch (error) { /* Optional optimization. */ } }
 function setupLocationPicker(inputId, menuId, { citiesOnly = false, onSelect = () => {} } = {}) {
   const input = $(inputId); const menu = $(menuId); let sessionToken = crypto.randomUUID(); let timer;
   input.addEventListener('input', () => {
@@ -38,7 +41,7 @@ function setupLocationPicker(inputId, menuId, { citiesOnly = false, onSelect = (
 function formatScheduleDate(value) { return value ? prettyDate(value) : 'Choose a date'; }
 function renderScheduleEditor(values = defaultDates()) {
   const editor = $('schedule-editor');
-  editor.innerHTML = values.slice(0, 3).map((date, index) => `<div class="schedule-editor-row" data-schedule-index="${index}"><label>Date ${index + 1}<input required type="date" class="schedule-date" value="${date || ''}" /></label><div class="schedule-times"><div class="schedule-times-heading"><span>Available times</span><small>Up to 3 for this date</small></div><div class="schedule-time-list">${['18:00', '19:00', '20:00'].map((time) => `<label class="time-row"><input required class="time-input" type="time" value="${time}" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>`).join('')}</div><button class="add-time" type="button" data-add-schedule-time>+ Add another time</button></div></div>`).join('');
+  editor.innerHTML = values.slice(0, 3).map((date, index) => `<div class="schedule-editor-row" data-schedule-index="${index}"><label>Date ${index + 1}<input required type="date" class="schedule-date" value="${date || ''}" /></label><div class="schedule-times"><div class="schedule-times-heading"><span>Available times</span><small>Up to 3 for this date</small></div><div class="schedule-time-list"><label class="time-row"><input required class="time-input" type="time" value="18:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label></div><button class="add-time" type="button" data-add-schedule-time>+ Add another time</button></div></div>`).join('') + (values.length < 3 ? '<button class="add-date" type="button" data-add-schedule-date>+ Add another date</button>' : '');
 }
 function hydrateDates() { renderScheduleEditor(defaultDates()); }
 const QUESTION_DEFAULTS = {
@@ -53,6 +56,28 @@ const questionState = Object.fromEntries(Object.entries(QUESTION_DEFAULTS).map((
 const questionEnabled = Object.fromEntries(Object.entries(questionState).map(([key, options]) => [key, new Set(options)]));
 function selectedTopics() { const inputs = [...document.querySelectorAll('#question-topics input')]; return inputs.length ? inputs.filter((input) => input.checked).map((input) => input.value) : ['cuisine', 'price', 'vibe', 'distance']; }
 let activeQuestion = null;
+function resetBuilderForm() {
+  state.event = null;
+  state.aggregate = null;
+  state.responses = [];
+  $('event-form').reset();
+  $('event-location').dataset.placeId = '';
+  $('event-location').dataset.lat = '';
+  $('event-location').dataset.lng = '';
+  Object.entries(QUESTION_DEFAULTS).forEach(([key, options]) => {
+    questionState[key] = [...options];
+    questionEnabled[key] = new Set(options);
+  });
+  activeQuestion = null;
+  hydrateDates();
+  renderQuestionOptions();
+  $('share-modal').classList.add('hidden');
+  $('results-card').classList.add('hidden');
+  $('event-overview').classList.add('hidden');
+  $('question-drawer').classList.add('hidden');
+  showEventBuilder();
+  $('event-name').focus();
+}
 function renderQuestionOptions() {
   $('question-topics').innerHTML = Object.keys(QUESTION_DEFAULTS).map((key) => { const enabled = selectedTopics().includes(key); const count = questionEnabled[key].size; return `<div class="topic-row ${enabled ? 'is-enabled' : ''}"><label class="topic-check"><input type="checkbox" value="${key}" ${enabled ? 'checked' : ''} /><span><strong>${QUESTION_LABELS[key]}</strong><small>${enabled ? `${count} choices ready` : 'Not included'}</small></span></label><button class="topic-open" type="button" data-open-question="${key}" ${enabled ? '' : 'disabled'} aria-label="Edit ${QUESTION_LABELS[key]} choices">Edit <span>›</span></button></div>`; }).join('');
   if (!activeQuestion || !selectedTopics().includes(activeQuestion)) { $('question-drawer').classList.add('hidden'); $('question-options').innerHTML = ''; return; }
@@ -101,18 +126,91 @@ function createEvent(event) {
   $('share-message').value = `🍽️ Help us pick ${event.name} in ${event.location}!\n\nVote here (30 seconds): ${event.url}\n\nPick the dates and vibe that work for you — we’ll find the best table for everyone.`;
   $('expiry-note').textContent = event.expiresAt ? `Responses close ${prettyDateTime(event.expiresAt)}.` : '';
   $('results-card').classList.remove('hidden');
+  $('results-card').classList.remove('overview-results');
   $('results-title').textContent = `${event.name} is ready for votes.`;
   $('share-modal').classList.remove('hidden');
 }
 
-$('signup-form').addEventListener('submit', async (event) => { event.preventDefault(); const email = $('organizer-email').value; const response = await fetch(`${API_BASE}/api/users`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email }) }); const user = await response.json(); if (!response.ok) return alert(user.detail || 'Could not create organizer'); state.organizerId = user.id; localStorage.setItem('organizerEmail', email); localStorage.setItem('organizerId', user.id); hydrateDates(); show('organizer'); });
+function showEventBuilder() { $('organizer-hub').classList.add('hidden'); $('event-overview').classList.add('hidden'); $('event-builder').classList.remove('hidden'); $('results-card').classList.remove('overview-results'); }
+function renderOverview(aggregate) {
+  const report = aggregate.report || {};
+  const schedule = report.schedule || {};
+  const preferences = report.preferences || {};
+  const pairs = (schedule.recommended_pairs || []).slice(0, 3);
+  const stats = [
+    [`${aggregate.response_count || 0}`, 'responses'],
+    [schedule.pair_consensus === 'tie' ? 'Tied' : 'Clear', 'schedule signal'],
+    [report.confidence?.overall?.label || 'Building', 'group confidence'],
+  ];
+  $('overview-stats').innerHTML = stats.map(([value, label]) => `<div class="overview-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join('');
+  const scheduleMarkup = pairs.length ? `<section class="overview-block"><h3>When the group can meet</h3><div class="pair-list">${pairs.map((pair, index) => `<div class="pair-row"><span>${index === 0 ? 'Leading option' : 'Alternative'} · ${prettyDate(pair.date)} at ${prettyTime(pair.time)}</span><b>${pair.votes} vote${pair.votes === 1 ? '' : 's'}</b></div>`).join('')}</div></section>` : '';
+  const preferenceBlocks = Object.entries(preferences).filter(([, item]) => item?.leaders?.length).slice(0, 4).map(([key, item]) => { const leaders = item.leaders.slice(0, 3); const max = Math.max(...leaders.map((leader) => leader.votes), 1); return `<section class="overview-block"><h3>${escapeHtml(QUESTION_LABELS[key] || key)}</h3><div class="preference-list">${leaders.map((leader) => `<div class="preference-row"><div class="preference-label"><span>${escapeHtml(leader.value)}</span><b>${leader.votes}</b></div><div class="preference-bar"><i data-bar-width="${Math.round((leader.votes / max) * 100)}"></i></div></div>`).join('')}</div></section>`; }).join('');
+  const dietary = (report.constraints?.dietary_requirements || []).join(', ');
+  const dietaryMarkup = dietary ? `<p class="overview-constraint"><strong>Dietary notes:</strong> ${escapeHtml(dietary)}</p>` : '';
+  $('overview-grid').innerHTML = scheduleMarkup + preferenceBlocks + dietaryMarkup;
+  const animateBars = () => document.querySelectorAll('#overview-grid [data-bar-width]').forEach((bar) => { const width = `${bar.dataset.barWidth}%`; if (window.motionAnimate) window.motionAnimate(bar, { width: ['0%', width] }, { duration:.55, delay:.08 }); else { bar.style.width = width; } });
+  requestAnimationFrame(animateBars);
+}
+async function showEventOverview(event, aggregate) {
+  state.event = event;
+  state.aggregate = aggregate;
+  $('organizer-hub').classList.add('hidden'); $('event-builder').classList.add('hidden'); $('event-overview').classList.remove('hidden');
+  $('results-card').classList.add('hidden'); $('results-card').classList.add('overview-results'); $('results-card').classList.remove('recommendation-page-mode'); $('recommendation-back').classList.add('hidden'); $('results-title').textContent = `${event.name} recommendations`; $('response-summary').textContent = `${aggregate.response_count || 0} response${aggregate.response_count === 1 ? '' : 's'} collected.`; $('recommendations').innerHTML = ''; $('booking-handoff').classList.add('hidden');
+  $('overview-title').textContent = event.name; $('overview-location').textContent = event.location; renderOverview(aggregate); $('event-overview').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+function renderRecommendationResult(result) {
+  renderAgentActions(result.response?.actions || result.actions || []);
+  const fallbackText = result.error_code === 'RECOMMENDATION_TIMEOUT'
+    ? 'Live research took longer than the demo window. Showing the seeded recommendation.'
+    : result.error_code === 'CONTEXT_WINDOW_OVERFLOW'
+      ? 'Live research was stopped because the browser evidence was too large. Showing the seeded recommendation.'
+      : 'Live research was unavailable. Showing the seeded recommendation.';
+  const fallbackNote = result.fallback ? `<p class="response-summary">${fallbackText}</p>` : '';
+  $('recommendations').innerHTML = `${fallbackNote}<article class="agent-answer"><div class="card-kicker">/ agent response</div><div>${formatAgentAnswer(result.answer || '')}</div></article>`;
+}
+function openRecommendationPage() {
+  if (!state.event) return;
+  $('share-modal').classList.add('hidden'); $('event-overview').classList.add('hidden'); $('results-card').classList.remove('hidden'); $('results-card').classList.add('recommendation-page-mode'); $('recommendation-back').classList.remove('hidden'); $('results-title').textContent = `${state.event.name} recommendation`;
+  const responseCount = state.aggregate?.response_count || state.responses.length || 0;
+  $('response-summary').textContent = '';
+  const cached = readRecommendationCache(state.event, responseCount);
+  if (cached) { renderRecommendationResult(cached); $('run-agent').disabled = false; $('run-agent').innerHTML = 'Refresh recommendation <span>→</span>'; return; }
+  $('recommendations').innerHTML = ''; $('booking-handoff').classList.add('hidden'); $('run-agent').click(); $('results-card').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+function renderEventShelf(events) {
+  const shelf = $('event-shelf');
+  if (!events.length) { shelf.innerHTML = '<p class="response-summary">No events yet. Start with a quick dinner plan.</p>'; return; }
+  shelf.innerHTML = events.map((event) => `<button type="button" class="event-shelf-card" data-event-id="${escapeHtml(event.id)}"><span><strong>${escapeHtml(event.event_name)}</strong><small>${escapeHtml(event.location)} · ${event.response_count} response${event.response_count === 1 ? '' : 's'}</small></span><b>${event.is_open ? 'Open' : 'Closed'} <span aria-hidden="true">→</span></b></button>`).join('');
+}
+async function loadOrganizerEvents() {
+  if (!state.organizerId) return;
+  try {
+    const response = await fetch(`${API_BASE}/api/organizers/${encodeURIComponent(state.organizerId)}/surveys`, { headers:{'X-Organizer-Id':state.organizerId} });
+    const data = await response.json();
+    if (response.ok) renderEventShelf(data.events || []);
+  } catch (error) { $('event-shelf').innerHTML = '<p class="response-summary">Your event shelf is unavailable right now. You can still start a new event.</p>'; }
+}
+async function openOrganizerEvent(id) {
+  const [eventResponse, aggregateResponse] = await Promise.all([fetch(`${API_BASE}/api/surveys/${encodeURIComponent(id)}`), fetch(`${API_BASE}/api/surveys/${encodeURIComponent(id)}/aggregate`)]);
+  const event = await eventResponse.json(); const aggregate = await aggregateResponse.json();
+  if (!eventResponse.ok) return alert(event.detail || 'Could not open event');
+  if (!aggregateResponse.ok) return alert(aggregate.detail || 'Could not load event summary');
+  await showEventOverview({ name:event.event_name, location:event.location, dates:event.dates, times:event.times, availability:event.availability, questions:event.questions, surveyId:event.id, publicToken:event.public_token, url:`${location.origin}/?survey=${event.public_token}`, expiresAt:event.expires_at, isOpen:event.is_open }, aggregate);
+}
+
+$('signup-form').addEventListener('submit', async (event) => { event.preventDefault(); const email = $('organizer-email').value; const response = await fetch(`${API_BASE}/api/users`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email }) }); const user = await response.json(); if (!response.ok) return alert(user.detail || 'Could not create organizer'); state.organizerId = user.id; localStorage.setItem('organizerEmail', email); localStorage.setItem('organizerId', user.id); hydrateDates(); show('organizer'); loadOrganizerEvents(); });
+$('start-event').addEventListener('click', resetBuilderForm);
+$('new-event').addEventListener('click', resetBuilderForm);
+$('event-shelf').addEventListener('click', (event) => { const card = event.target.closest('[data-event-id]'); if (card) openOrganizerEvent(card.dataset.eventId); });
+$('find-recommendation').addEventListener('click', openRecommendationPage);
 $('event-form').addEventListener('submit', async (event) => { event.preventDefault(); const scheduleRows = [...document.querySelectorAll('.schedule-editor-row')]; const availability = Object.fromEntries(scheduleRows.map((row) => [row.querySelector('.schedule-date').value, [...row.querySelectorAll('.time-input')].map((input) => input.value).filter(Boolean)]).filter(([date, slots]) => date && slots.length)); const dates = Object.keys(availability); const times = [...new Set(Object.values(availability).flat())]; const questions = Object.fromEntries(selectedTopics().map((key) => [key, questionState[key].filter((option) => questionEnabled[key].has(option))])); if (dates.length < 1 || dates.length > 3) return alert('Choose between one and three dates.'); if (new Set(dates).size !== dates.length) return alert('Choose a different date for each row.'); if (Object.values(availability).some((slots) => !slots.length || new Set(slots).size !== slots.length)) return alert('Give each date at least one unique time.'); if (Object.values(questions).some((options) => !options.length)) return alert('Keep at least one answer option in each question.'); const location = $('event-location'); const expiryDays = Number($('event-expiry').value) || 2; const expiresAt = new Date(Date.now() + expiryDays * 86400000).toISOString(); const payload = { organizer_id:state.organizerId || 'local-organizer', event_name:$('event-name').value, location:location.value, location_place_id:location.dataset.placeId || null, location_lat:location.dataset.lat ? Number(location.dataset.lat) : null, location_lng:location.dataset.lng ? Number(location.dataset.lng) : null, dates, times, availability, questions, expires_at:expiresAt }; const response = await fetch(`${API_BASE}/api/surveys`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) return alert(data.detail || 'Could not create survey'); state.event = { name:payload.event_name, location:payload.location, dates, times, availability, questions:payload.questions, surveyId:data.id, publicToken:data.public_token, url:data.share_url, expiresAt:data.expires_at || expiresAt, isOpen:true }; createEvent(state.event); });
-$('schedule-editor').addEventListener('click', (event) => { const row = event.target.closest('.schedule-editor-row'); if (!row) return; if (event.target.matches('[data-add-schedule-time]')) { const list = row.querySelector('.schedule-time-list'); if (list.children.length >= 3) return; const time = document.createElement('label'); time.className = 'time-row'; time.innerHTML = '<input required class="time-input" type="time" value="21:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button>'; list.appendChild(time); } if (event.target.classList.contains('remove-time') && row.querySelectorAll('.time-row').length > 1) event.target.closest('.time-row').remove(); });
+$('schedule-editor').addEventListener('click', (event) => { if (event.target.matches('[data-add-schedule-date]')) { const rows = [...$('schedule-editor').querySelectorAll('.schedule-editor-row')]; if (rows.length >= 3) return; const schedules = rows.map((item) => ({ date:item.querySelector('.schedule-date').value, times:[...item.querySelectorAll('.time-input')].map((input) => input.value) })); const lastDate = schedules.at(-1)?.date; const nextDate = lastDate ? new Date(`${lastDate}T12:00:00`) : new Date(); nextDate.setDate(nextDate.getDate() + 7); schedules.push({ date:nextDate.toISOString().slice(0, 10), times:['18:00'] }); renderScheduleEditor(schedules.map((item) => item.date)); $('schedule-editor').querySelectorAll('.schedule-editor-row').forEach((item, index) => { item.querySelectorAll('.time-input').forEach((input, timeIndex) => { input.value = schedules[index].times[timeIndex] || '18:00'; }); }); return; } const row = event.target.closest('.schedule-editor-row'); if (!row) return; if (event.target.matches('[data-add-schedule-time]')) { const list = row.querySelector('.schedule-time-list'); if (list.children.length >= 3) return; const time = document.createElement('label'); time.className = 'time-row'; time.innerHTML = '<input required class="time-input" type="time" value="21:00" /><button class="remove-time" type="button" aria-label="Remove time">×</button></label>'; list.appendChild(time); } if (event.target.classList.contains('remove-time') && row.querySelectorAll('.time-row').length > 1) event.target.closest('.time-row').remove(); });
 $('copy-message').addEventListener('click', async () => { await navigator.clipboard?.writeText($('share-message').value); $('copied-note').classList.remove('hidden'); setTimeout(() => $('copied-note').classList.add('hidden'), 2400); });
 document.querySelectorAll('[data-close-modal]').forEach((node) => node.addEventListener('click', () => $('share-modal').classList.add('hidden')));
 $('open-survey').addEventListener('click', () => { $('share-modal').classList.add('hidden'); prepareSurvey(); show('survey'); });
+$('view-results').addEventListener('click', () => { $('share-modal').classList.add('hidden'); $('results-card').scrollIntoView({ behavior:'smooth', block:'start' }); });
+$('recommendation-back').addEventListener('click', () => { $('results-card').classList.add('hidden'); $('results-card').classList.remove('recommendation-page-mode'); $('results-card').classList.add('overview-results'); $('recommendation-back').classList.add('hidden'); $('response-summary').textContent = `${state.aggregate?.response_count || 0} response${(state.aggregate?.response_count || 0) === 1 ? '' : 's'} collected.`; $('recommendations').innerHTML = ''; $('booking-handoff').classList.add('hidden'); $('event-overview').classList.remove('hidden'); $('event-overview').scrollIntoView({ behavior:'smooth', block:'start' }); });
 $('back-organizer').addEventListener('click', () => show('organizer'));
-$('reset-app').addEventListener('click', () => { state.event = null; state.responses = []; $('share-modal').classList.add('hidden'); $('results-card').classList.add('hidden'); show('signup'); });
 $('copy-link').addEventListener('click', async () => { await navigator.clipboard?.writeText($('survey-link').value); $('copied-note').textContent = 'Link copied — ready for the group chat.'; $('copied-note').classList.remove('hidden'); setTimeout(() => $('copied-note').classList.add('hidden'), 2400); });
 
 function formatDistance(value) { const miles = Number.parseInt(value, 10); return Number.isFinite(miles) ? `${miles}${miles === 30 ? '+' : ''} mile${miles === 1 ? '' : 's'} from meetup` : value; }
@@ -134,24 +232,60 @@ $('run-agent').addEventListener('click', async () => {
   if (!state.event) return;
   const button = $('run-agent');
   button.disabled = true;
-  button.innerHTML = 'Asking the agent <span>…</span>';
-  $('recommendations').innerHTML = '<p class="response-summary">Google Places is finding and hydrating candidates. OpenTable availability will be checked next.</p>';
+  button.innerHTML = 'Researching <span>…</span>';
+  const stages = [
+    'Reading the group’s preferences',
+    'Finding restaurants with Google Places',
+    'Verifying restaurant details',
+    'Checking reservation paths',
+    'Preparing the recommendation',
+  ];
+  let stageIndex = 0;
+  const renderProgress = (message = stages[stageIndex]) => {
+    $('recommendations').innerHTML = `<div class="agent-progress" aria-live="polite"><p class="response-summary">${escapeHtml(message)}</p><div class="progress-track"><span style="width:${Math.min(92, 18 + stageIndex * 18)}%"></span></div><ol>${stages.map((stage, index) => `<li class="${index < stageIndex ? 'done' : index === stageIndex ? 'active' : ''}">${escapeHtml(stage)}</li>`).join('')}</ol></div>`;
+  };
+  renderProgress();
   try {
     const response = await fetch(`${API_BASE}/api/surveys/${state.event.surveyId}/recommendations`, { method:'POST', headers:{'Content-Type':'application/json','X-Organizer-Id':state.organizerId || 'local-organizer'} });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || 'Agent request failed');
-    const answer = data.answer || '';
-    const bookingUrl = findBookingUrl(answer);
-    $('booking-handoff').innerHTML = bookingUrl ? `<a class="button secondary" href="${bookingUrl}" target="_blank" rel="noreferrer">Continue to booking <span>↗</span></a><p>Review the date, time, and party size, then confirm with the restaurant.</p>` : '';
-    $('booking-handoff').classList.toggle('hidden', !bookingUrl);
-    $('recommendations').innerHTML = `<article class="agent-answer"><div class="card-kicker">✦ / agent response</div><div>${formatAgentAnswer(answer)}</div></article>`;
+    if (!data.run_id) throw new Error('Recommendation run was not created');
+    const pollingStartedAt = Date.now();
+    const poll = async () => {
+      if (Date.now() - pollingStartedAt > 570000) {
+        throw new Error('Recommendation progress expired before the server returned a result. Please try again.');
+      }
+      const statusResponse = await fetch(`${API_BASE}/api/recommendations/${encodeURIComponent(data.run_id)}`, { headers:{'X-Organizer-Id':state.organizerId || 'local-organizer'} });
+      const status = await statusResponse.json().catch(() => ({}));
+      if (!statusResponse.ok) throw new Error(status.detail || 'Could not read recommendation progress');
+      if (status.status === 'queued' || status.status === 'running') {
+        const stageOrder = {
+          queued: 0,
+          agent_reasoning: 0,
+          restaurant_discovery: 1,
+          restaurant_hydration: 2,
+          reservation_scan: 3,
+          reservation_inspection: 3,
+          reservation_availability: 4,
+        };
+        stageIndex = Math.max(stageIndex, stageOrder[status.stage] ?? 1);
+        renderProgress(status.message || stages[stageIndex]);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        return poll();
+      }
+      if (!['complete', 'fallback', 'timeout'].includes(status.status)) throw new Error(status.message || 'Recommendation run failed');
+      return status;
+    };
+    const result = await poll();
+    writeRecommendationCache(state.event, state.aggregate?.response_count || state.responses.length || 0, result);
+    renderRecommendationResult(result);
   } catch (error) {
     console.error('Recommendation request failed', error);
     const message = error instanceof Error ? error.message : 'We could not reach the recommendation service. Please try again in a moment.';
     $('recommendations').innerHTML = `<p class="error-message">${escapeHtml(message)}</p>`;
   } finally {
     button.disabled = false;
-    button.innerHTML = 'Find our top 3 <span>✦</span>';
+    button.innerHTML = 'Find our top 3 <span>→</span>';
   }
 });
 
@@ -167,6 +301,14 @@ function findBookingUrl(value) {
   return line?.match(/https?:\/\/[^\s)]+/)?.[0] || '';
 }
 
+function renderAgentActions(actions) {
+  const external = actions.filter((action) => action.url);
+  const followups = actions.filter((action) => !action.url);
+  $('booking-handoff').innerHTML = external.map((action) => `<a class="button ${action.kind === 'confirmation' ? 'primary' : 'secondary'}" href="${escapeHtml(action.url)}" target="_blank" rel="noreferrer">${escapeHtml(action.label)} <span>↗</span></a>`).join('') + (followups.length ? `<div class="follow-up-actions">${followups.map((action) => `<button type="button" class="text-button" data-follow-up="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('')}</div>` : '');
+  $('booking-handoff').classList.toggle('hidden', !actions.length);
+  $('booking-handoff').querySelectorAll('[data-follow-up]').forEach((button) => button.addEventListener('click', () => { $('recommendations').insertAdjacentHTML('afterbegin', `<p class="response-summary">${escapeHtml(button.textContent)} selected — ask the agent to continue with this request.</p>`); }));
+}
+
 async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, dates:survey.dates, times:survey.times, availability:survey.availability, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href, expiresAt:survey.expires_at, isOpen:survey.is_open !== false }; if (survey.is_open === false) { $('survey-title').innerHTML = `Help pick <em>${survey.event_name}.</em>`; show('survey'); $('survey-form').classList.add('hidden'); $('survey-closed').classList.remove('hidden'); return; } prepareSurvey(); show('survey'); }
 const openOrganizerSettings = new URLSearchParams(location.search).get('organizer') === '1' && state.organizerId;
-if (openOrganizerSettings) { hydrateDates(); show('organizer'); } else loadPublicSurvey();
+if (openOrganizerSettings) { hydrateDates(); show('organizer'); loadOrganizerEvents(); } else loadPublicSurvey();

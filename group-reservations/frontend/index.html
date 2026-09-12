@@ -12,7 +12,7 @@
       const routeParams = new URLSearchParams(window.location.search);
       if (routeParams.has('survey')) {
         window.location.replace(`guest-survey.html${window.location.search}${window.location.hash}`);
-      } else {
+      } else if (!routeParams.has('organizer')) {
         window.location.replace(`landing.html${window.location.search}${window.location.hash}`);
       }
     </script>
@@ -37,9 +37,18 @@
         <section class="screen" id="organizer-screen" aria-labelledby="organizer-title">
           <div class="page-heading">
             <div><p class="eyebrow">For the group chat</p><h1 id="organizer-title">Get everyone on the same page.</h1></div>
-            <button class="text-button" id="reset-app">Start over</button>
+            <button class="text-button" id="new-event" type="button">Start over</button>
           </div>
-          <div class="build-page">
+          <section class="organizer-hub" id="organizer-hub">
+            <div class="hub-heading"><div><div class="card-kicker">Your events</div><h2>Keep the useful bits.</h2></div><button class="button primary" id="start-event" type="button">Plan an event <span>→</span></button></div>
+            <div class="event-shelf" id="event-shelf"><p class="response-summary">Loading your events…</p></div>
+          </section>
+          <section class="card event-overview hidden" id="event-overview" aria-labelledby="overview-title">
+            <div class="overview-heading"><div><div class="card-kicker">Event overview</div><h2 id="overview-title"></h2><p id="overview-location" class="fine-print"></p></div><button class="button primary" id="find-recommendation" type="button">Find my recommendation <span>→</span></button></div>
+            <div class="overview-stats" id="overview-stats"></div>
+            <div class="overview-grid" id="overview-grid"></div>
+          </section>
+          <div class="build-page hidden" id="event-builder">
             <form class="card event-form" id="event-form">
               <div class="card-kicker">Set the vibe</div>
               <h2>Where at?</h2>
@@ -90,11 +99,13 @@
                   <p class="copied hidden" id="copied-note">Copied — ready for the group chat.</p>
                 </div>
               </div>
+              <button class="button primary full" id="view-results" type="button">View responses and recommendations <span>→</span></button>
               <button class="button ghost full" id="open-survey" type="button">Preview the survey</button>
             </div>
           </div>
           <section class="card results-card hidden" id="results-card">
-            <div class="results-heading"><div><div class="card-kicker">Let the group decide</div><h2 id="results-title">Responses will land here.</h2></div><button class="button primary" id="run-agent" type="button">Find our top 3 <span>✦</span></button></div>
+            <div class="results-heading"><div><div class="card-kicker">Let the group decide</div><h2 id="results-title">Responses will land here.</h2></div><button class="button primary" id="run-agent" type="button">Find our top 3 <span>→</span></button></div>
+            <button class="text-button recommendation-back hidden" id="recommendation-back" type="button">← Back to event summary</button>
             <div id="response-summary" class="response-summary"></div>
             <div id="booking-handoff" class="booking-handoff hidden"></div>
             <div id="recommendations" class="recommendations"></div>
@@ -119,6 +130,7 @@
       </main>
     </div>
     <script src="vendor/qrcode.js"></script>
+    <script type="module">import { animate } from 'https://cdn.jsdelivr.net/npm/motion@12.23.12/+esm'; window.motionAnimate = animate;</script>
     <script src="app.js"></script>
   </body>
 </html>

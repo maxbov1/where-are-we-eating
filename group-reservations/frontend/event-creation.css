@@ -1,8 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Allura&family=DM+Serif+Display:ital@0;1&family=Libre+Baskerville:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap');
 
 :root { --ink: #51301f; --paper: #f9f0d8; --paper-shadow: #d7c295; --accent: #73422c; }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; color: var(--ink); font-family: 'Libre Baskerville', Georgia, serif; }
+[hidden], #organizer-choices[hidden], #signup-form[hidden] { display: none !important; }
+body { margin: 0; min-width: 320px; color: var(--ink); font-family: 'Alegreya Sans', sans-serif; }
 .supper-page { position: relative; display: grid; min-height: 100svh; overflow: hidden; background: #765832; }
 .dinner-scene { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(46, 27, 15, .12), rgba(46, 27, 15, 0) 48%), url('assets/supper-background.jpg') center / cover no-repeat; filter: saturate(.86) contrast(.98); }
 .invitation { position: relative; z-index: 1; background-color: var(--paper); background-image: linear-gradient(rgba(123, 87, 42, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(123, 87, 42, .02) 1px, transparent 1px); background-size: 7px 7px; }
@@ -13,13 +14,22 @@ h1 { margin: 0; font-family: 'DM Serif Display', Georgia, serif; font-size: clam
 .intro { max-width: 365px; margin: -5px auto 4px; font-size: 13px; line-height: 1.65; }
 form { display: grid; gap: 9px; text-align: left; }
 label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-input { width: 100%; border: 1px solid rgba(81, 48, 31, .48); border-radius: 0; background: rgba(255, 253, 239, .68); color: var(--ink); font: 14px 'Libre Baskerville', Georgia, serif; outline: none; padding: 13px 14px; }
+input { width: 100%; border: 1px solid rgba(81, 48, 31, .48); border-radius: 0; background: rgba(255, 253, 239, .68); color: var(--ink); font: 15px 'Alegreya Sans', sans-serif; outline: none; padding: 14px; }
 input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(115, 66, 44, .14); }
-button { min-height: 48px; border: 1px solid #4e2c1c; background: var(--accent); color: #fff8e7; cursor: pointer; font: 700 12px 'Libre Baskerville', Georgia, serif; letter-spacing: .05em; margin-top: 6px; padding: 13px 18px; text-transform: uppercase; transition: transform .18s, background .18s; }
+button { min-height: 48px; border: 1px solid #4e2c1c; background: var(--accent); color: #fff8e7; cursor: pointer; font: 700 13px 'Alegreya Sans', sans-serif; letter-spacing: .06em; margin-top: 6px; padding: 13px 18px; text-transform: uppercase; transition: transform .18s, background .18s; }
 button:hover { background: #57301f; transform: translateY(-1px); }
 button:disabled { cursor: wait; opacity: .72; transform: none; }
 .form-note, .form-message { min-height: 18px; margin: 2px 0 0; color: rgba(81, 48, 31, .78); font-size: 10px; line-height: 1.55; text-align: center; }
 .form-message:empty { display: none; }
 .form-message.error { color: #8b1f17; }
-@media (max-width: 700px) { .dinner-scene { background-position: 39% center; } .invitation { align-self: end; justify-self: center; margin: 0 0 34px; transform: none; } .invitation-inner { padding: 34px 25px 27px; } }
+.hidden { display:none; }
+.organizer-choices { display:grid; gap:16px; text-align:left; }.organizer-choices h2 { margin:0; font-family:'DM Serif Display',Georgia,serif; font-size:29px; font-weight:400; line-height:1.15; text-align:center; }.choice-list { display:grid; gap:10px; }.choice-card { display:flex; align-items:center; justify-content:space-between; gap:18px; min-height:70px; padding:14px 16px; border:1px solid rgba(81,48,31,.42); background:rgba(255,253,239,.55); color:var(--ink); text-decoration:none; transition:transform .18s, border-color .18s, background .18s; }.choice-card:hover { border-color:var(--ink); background:rgba(255,253,239,.85); transform:translateY(-1px); }.choice-card.featured { background:var(--accent); color:#fff8e7; border-color:#4e2c1c; }.choice-card.featured:hover { background:#57301f; }.choice-card strong,.choice-card small { display:block; }.choice-card strong { font-size:13px; }.choice-card small { margin-top:5px; font-size:10px; line-height:1.5; opacity:.78; }.choice-card b { font-size:18px; font-weight:400; }.organizer-choices .form-note { margin-top:0; }
+@media (max-width: 700px) { .supper-page { background:var(--paper); }.dinner-scene { display:none; }.invitation { align-self: start; justify-self: center; width:min(100%,420px); margin:28px 0 34px; transform:none; }.invitation-inner { padding:34px 25px 27px; } }
 @media (max-width: 380px) { .invitation { width: calc(100% - 24px); } .invitation-inner { padding-left: 19px; padding-right: 19px; } h1 { font-size: 35px; } }
+.invitation-inner { gap:22px; }
+.choice-card { min-height:78px; padding:17px 19px; }
+button:focus-visible,.choice-card:focus-visible { outline:3px solid rgba(115,66,44,.35); outline-offset:3px; }
+.back-link { display:inline-flex; min-height:44px; align-items:center; margin-bottom:24px; color:var(--muted); font-size:13px; text-decoration:none; }
+.back-link:hover { color:var(--ink); text-decoration:underline; text-underline-offset:3px; }
+.back-link:focus-visible { outline:3px solid rgba(115,66,44,.35); outline-offset:3px; }
+input,button { font-family:'Alegreya Sans',sans-serif; }

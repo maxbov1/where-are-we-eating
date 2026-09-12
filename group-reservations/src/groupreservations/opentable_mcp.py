@@ -11,6 +11,7 @@ from datetime import datetime
 
 import boto3
 from strands import Agent
+from strands.agent.conversation_manager import NullConversationManager
 from strands.models import BedrockModel
 
 from .config import settings
@@ -196,6 +197,10 @@ def create_agent(browser_tools: list[object] | None = None,
         model=model,
         system_prompt=SYSTEM_PROMPT,
         callback_handler=None,
+        # Context overflow must fail fast into the API's seeded fallback. The
+        # default manager recursively retries overflow after trimming, which
+        # is unsafe when one tool result is still too large.
+        conversation_manager=NullConversationManager(),
         tools=[google_places_search, google_places_details,
                *(browser_tools or []), *( [evidence_tool] if evidence_tool else []),
                *( [state_tool] if state_tool else [])],
@@ -216,7 +221,8 @@ def configuration_status() -> dict[str, str | bool]:
     }
 
 
-def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | None = None) -> str:
+def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | None = None,
+        progress_callback=None) -> str:
     """Run one organizer prompt with local browser reservation handoffs."""
     logger.info("agent stage=run_start user_id=%s prompt_chars=%d", user_id, len(prompt))
     estimated_prompt_tokens = (len(SYSTEM_PROMPT) + len(prompt) + 3) // 4
@@ -227,7 +233,8 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
     )
     state = state or AgentState()
     browser, browser_tools = create_reservation_browser_tools(user_id, state)
-    trace = AgentTrace(user_id)
+    trace = AgentTrace(user_id, on_phase=progress_callback)
+    agent_error: Exception | None = None
     try:
         logger.info(
             "agent stage=agent_start tools=%d trace=%s",
@@ -311,9 +318,34 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
                 "The model draft below is not an authoritative success report.\n\n"
                 f"MODEL DRAFT:\n{result}"
             )
+        logger.info(
+            "agent stage=handoff_gate_complete resolved=%d required=%d blocked=%s",
+            len(resolved_handoffs), required_handoffs,
+            len(resolved_handoffs) < required_handoffs,
+        )
         logger.info("agent stage=agent_complete result_chars=%d", len(result))
         return result
+    except Exception as exc:
+        agent_error = exc
+        raise
     finally:
+        stats = trace.token_stats
+        logger.info(
+            "agent stage=token_telemetry_final model_calls=%d tool_calls=%d "
+            "projected_input_tokens=%d cumulative_history_tokens=%d "
+            "tool_result_chars=%d state_snapshot_chars=%d dom_chars=%d ax_chars=%d "
+            "action_trace_chars=%d image_bytes=%d largest_tool_context_tokens=%d "
+            "actual_input_tokens=%d actual_output_tokens=%d actual_total_tokens=%d "
+            "provider_error=%s",
+            stats["model_calls"], stats["tool_calls"],
+            stats["projected_input_tokens"], stats["cumulative_history_tokens"],
+            stats["tool_result_chars"], stats["state_snapshot_chars"],
+            stats["dom_chars"], stats["ax_chars"], stats["action_trace_chars"],
+            stats["image_bytes"], stats["largest_tool_context_tokens"],
+            stats["actual_input_tokens"], stats["actual_output_tokens"],
+            stats["actual_total_tokens"],
+            f"{type(agent_error).__name__}: {agent_error}"[:300] if agent_error else None,
+        )
         logger.info("agent stage=run_cleanup")
         browser.close()
 

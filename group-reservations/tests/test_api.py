@@ -1,11 +1,9 @@
 from fastapi.testclient import TestClient
-from botocore.exceptions import NoCredentialsError
-
 from groupreservations import api
 
 
-def test_recommendation_credential_error_preserves_cors_headers(monkeypatch):
-    """Browser clients receive a useful API error instead of a fake CORS failure."""
+def test_recommendation_starts_background_run_with_cors_headers(monkeypatch):
+    """Browser clients receive a run handle instead of waiting on the agent."""
     aggregate = {
         "survey_id": "survey-1",
         "event_name": "Team dinner",
@@ -19,9 +17,7 @@ def test_recommendation_credential_error_preserves_cors_headers(monkeypatch):
     }
     monkeypatch.setattr(api, "get_survey", lambda identifier: {"id": identifier})
     monkeypatch.setattr(api, "aggregate_survey", lambda identifier: aggregate)
-    monkeypatch.setattr(
-        api, "run", lambda *args, **kwargs: (_ for _ in ()).throw(NoCredentialsError())
-    )
+    monkeypatch.setattr(api, "run", lambda *args, **kwargs: "demo answer")
 
     client = TestClient(api.app, raise_server_exceptions=False)
     response = client.post(
@@ -32,6 +28,7 @@ def test_recommendation_credential_error_preserves_cors_headers(monkeypatch):
         },
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
-    assert "AWS" in response.json()["detail"]
+    assert response.json()["status"] == "queued"
+    assert response.json()["run_id"].startswith("recommendation-")

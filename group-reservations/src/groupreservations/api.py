@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Annotated
 
-from botocore.exceptions import BotoCoreError, NoCredentialsError
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -23,11 +26,26 @@ from .database import (
     create_survey,
     create_user,
     get_survey,
+    list_surveys_for_organizer,
     init_db,
 )
 from .config import settings
+from .recommendation_response import parse_recommendation_answer
 
 logger = logging.getLogger(__name__)
+
+# Browser-backed reservation phases need more time than discovery and prompt
+# assembly. These are elapsed-from-run-start limits, not unbounded retries.
+_RECOMMENDATION_STAGE_DEADLINES = {
+    "agent_reasoning": 300,
+    "restaurant_discovery": 180,
+    "restaurant_hydration": 240,
+    "reservation_scan": 240,
+    "reservation_inspection": 300,
+    "reservation_preparation": 360,
+    "reservation_availability": 420,
+    "cleanup": 480,
+}
 
 app = FastAPI(title="Where Are We Eating? Agent API", version="0.1.0")
 app.add_middleware(
@@ -37,6 +55,217 @@ app.add_middleware(
     allow_headers=["*"],
 )
 init_db()
+
+_recommendation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="recommendation")
+_recommendation_runs: dict[str, dict[str, object]] = {}
+_recommendation_runs_lock = threading.Lock()
+_DEMO_FALLBACK_ANSWER = """Demo fallback recommendation (the live research run was unavailable).
+
+Primary — Roka Akor San Francisco
+Japanese robata, sushi, and Wagyu in Jackson Square. Best fit for a special group dinner.
+Booking link: https://www.opentable.com/r/roka-akor-san-francisco
+Availability: live availability was not verified in fallback mode.
+
+Alternative — Ozumo San Francisco
+Contemporary Japanese sushi and robata near the Embarcadero. Good waterfront group option.
+Booking link: https://www.ozumosanfrancisco.com/
+
+Alternative — Akari Japanese Bistro
+An intimate Japanese bistro with a more relaxed feel.
+Booking link: https://www.akari-japanese.com/reservation
+
+No reservation has been made. Review the restaurant links and confirm the final date, time, and party size directly."""
+
+
+def _set_recommendation_run(run_id: str, **changes: object) -> dict[str, object] | None:
+    with _recommendation_runs_lock:
+        record = _recommendation_runs.get(run_id)
+        if record is not None:
+            record.update(changes)
+            return dict(record)
+    return None
+
+
+def _fallback_result(run_id: str, reason: str) -> None:
+    _set_recommendation_run(
+        run_id,
+        status="fallback",
+        stage="fallback_ready",
+        answer=_DEMO_FALLBACK_ANSWER,
+        response=parse_recommendation_answer(_DEMO_FALLBACK_ANSWER),
+        fallback=True,
+        fallback_reason=reason,
+        error_code="CONTEXT_WINDOW_OVERFLOW" if "context window" in reason.casefold() else "AGENT_RUN_FAILED",
+        completed_at=time.time(),
+    )
+
+
+def _is_context_overflow(error: BaseException) -> bool:
+    """Recognize provider/context failures through wrapped exception causes."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        label = f"{type(current).__name__} {current}".casefold()
+        if "contextwindowoverflow" in label or "context window overflow" in label:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: AgentState) -> None:
+    stage_messages = {
+        "restaurant_discovery": "Finding restaurants with Google Places",
+        "restaurant_hydration": "Verifying restaurant details",
+        "reservation_scan": "Scanning reservation paths",
+        "reservation_inspection": "Inspecting booking controls",
+        "reservation_availability": "Checking live availability",
+        "agent_reasoning": "Choosing the best fit for the group",
+    }
+
+    def on_phase(phase: str, _tool: str) -> None:
+        now = time.time()
+        _set_recommendation_run(
+            run_id, status="running", stage=phase,
+            message=stage_messages.get(phase, "Researching the best options"),
+            last_tool=_tool,
+            last_progress_at=now,
+        )
+
+    on_phase("agent_reasoning", "start")
+    try:
+        answer = run(prompt, user_id=organizer_id, state=state, progress_callback=on_phase)
+    except Exception as exc:
+        record = _set_recommendation_run(run_id, last_error_type=type(exc).__name__)
+        logger.exception(
+            "recommendation background run failed run_id=%s stage=%s elapsed_seconds=%.1f",
+            run_id,
+            (record or {}).get("stage", "unknown"),
+            time.time() - float((record or {}).get("created_at", time.time())),
+        )
+        if _is_context_overflow(exc):
+            logger.warning("recommendation context overflow; returning fallback run_id=%s", run_id)
+            _fallback_result(run_id, "Bedrock context window overflow; live research was stopped before retrying.")
+        else:
+            _fallback_result(run_id, f"Live recommendation failed: {type(exc).__name__}")
+        return
+    with _recommendation_runs_lock:
+        record = _recommendation_runs.get(run_id)
+        if not record or record.get("status") == "timeout":
+            logger.warning(
+                "recommendation result discarded after watchdog run_id=%s status=%s elapsed_seconds=%.1f",
+                run_id,
+                (record or {}).get("status", "missing"),
+                time.time() - float((record or {}).get("created_at", time.time())),
+            )
+            return
+        record.update({
+            "status": "complete",
+            "stage": "recommendation_ready",
+            "message": "The recommendation and reservation evidence are ready.",
+            "answer": answer,
+            "response": parse_recommendation_answer(answer),
+            "fallback": False,
+            "completed_at": time.time(),
+        })
+        logger.info(
+            "recommendation background run complete run_id=%s elapsed_seconds=%.1f",
+            run_id, time.time() - float(record.get("created_at", time.time())),
+        )
+
+
+def _expire_recommendation(run_id: str) -> None:
+    extend_cleanup = False
+    reschedule_for: float | None = None
+    with _recommendation_runs_lock:
+        record = _recommendation_runs.get(run_id)
+        if not record or record.get("status") not in {"queued", "running"}:
+            return
+        elapsed = time.time() - float(record.get("created_at", time.time()))
+        stage = str(record.get("stage") or "")
+        deadline = max(
+            settings.recommendation_timeout_seconds,
+            _RECOMMENDATION_STAGE_DEADLINES.get(stage, settings.recommendation_timeout_seconds),
+        )
+        if elapsed < deadline:
+            reschedule_for = max(1.0, deadline - elapsed)
+            record.update({
+                "message": f"Still working through {stage.replace('_', ' ')}.",
+                "watchdog_deadline_seconds": deadline,
+            })
+        # The agent has already produced its answer by this point; browser
+        # shutdown is still running in the agent's finally block. Give cleanup
+        # one bounded grace period instead of replacing a nearly-complete run
+        # with the seeded fallback at the exact watchdog deadline.
+        elif stage == "cleanup" and not record.get("cleanup_grace_used"):
+            record.update({
+                "message": "Finishing browser cleanup before returning the recommendation.",
+                "cleanup_grace_used": True,
+            })
+            extend_cleanup = True
+        elif reschedule_for is None:
+            logger.warning(
+                "recommendation watchdog timeout run_id=%s stage=%s tool=%s elapsed_seconds=%.1f phase_idle_seconds=%.1f timeout_seconds=%s",
+                run_id,
+                record.get("stage", "unknown"),
+                record.get("last_tool", "unknown"),
+                elapsed,
+                time.time() - float(record.get("last_progress_at", record.get("created_at", time.time()))),
+                settings.recommendation_timeout_seconds,
+            )
+            record.update({
+                "status": "timeout",
+                "stage": "fallback_ready",
+                "message": "Live research took too long, so the demo result is ready.",
+                "fallback": True,
+                "fallback_reason": "The live recommendation exceeded the local demo timeout.",
+                "error_code": "RECOMMENDATION_TIMEOUT",
+                "answer": _DEMO_FALLBACK_ANSWER,
+                "completed_at": time.time(),
+            })
+    if reschedule_for is not None:
+        logger.info(
+            "recommendation watchdog extended run_id=%s stage=%s tool=%s elapsed_seconds=%.1f phase_idle_seconds=%.1f deadline_seconds=%.1f next_check_seconds=%.1f",
+            run_id, stage, record.get("last_tool", "unknown"), elapsed,
+            time.time() - float(record.get("last_progress_at", record.get("created_at", time.time()))),
+            deadline, reschedule_for,
+        )
+        timer = threading.Timer(reschedule_for, _expire_recommendation, args=(run_id,))
+        timer.daemon = True
+        timer.start()
+        return
+    if extend_cleanup:
+        logger.warning(
+            "recommendation watchdog cleanup grace run_id=%s elapsed_seconds=%.1f grace_seconds=60",
+            run_id, elapsed,
+        )
+        timer = threading.Timer(60, _expire_recommendation, args=(run_id,))
+        timer.daemon = True
+        timer.start()
+
+
+def _enqueue_recommendation(prompt: str, organizer_id: str, state: AgentState) -> dict[str, object]:
+    run_id = f"recommendation-{uuid.uuid4().hex[:16]}"
+    now = time.time()
+    with _recommendation_runs_lock:
+        _recommendation_runs[run_id] = {
+            "run_id": run_id,
+            "organizer_id": organizer_id,
+            "status": "queued",
+            "stage": "queued",
+            "message": "Your group preferences are queued for research.",
+            "fallback": False,
+            "created_at": now,
+            "last_error_type": None,
+            "last_tool": None,
+            "last_progress_at": now,
+            "watchdog_deadline_seconds": settings.recommendation_timeout_seconds,
+        }
+    _recommendation_executor.submit(_run_recommendation, run_id, prompt, organizer_id, state)
+    timer = threading.Timer(settings.recommendation_timeout_seconds, _expire_recommendation, args=(run_id,))
+    timer.daemon = True
+    timer.start()
+    return {"run_id": run_id, "status": "queued", "stage": "queued", "message": "Your group preferences are queued for research."}
 
 
 class GuestResponse(BaseModel):
@@ -188,6 +417,19 @@ def survey(public_token: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Survey not found")
     return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions", "expires_at", "is_open")}
 
+
+@app.get("/api/organizers/{organizer_id}/surveys")
+def organizer_surveys(
+    organizer_id: str,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Return the organizer's compact active-event shelf."""
+    resolved = _resolve_organizer_id(authorization, x_organizer_id)
+    if resolved != organizer_id:
+        raise HTTPException(status_code=404, detail="Organizer not found")
+    return {"events": list_surveys_for_organizer(organizer_id)}
+
 # records a guest's response to the survey
 @app.post("/api/surveys/{public_token}/responses")
 def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[str, object]:
@@ -239,11 +481,16 @@ def _agent_prompt(payload: RecommendationRequest) -> str:
         "schedule": {"times_by_date": payload.availability},
         "responses": [response.model_dump(exclude_none=True) for response in payload.responses],
     }
+    # The deterministic report already contains the vote counts and leaders
+    # needed for ranking. Response-by-response records repeat that information
+    # and grow the model context linearly with every guest.
+    report = dict(report)
+    report.pop("responses", None)
     response_count = report.get("response_count", len(payload.responses))
     return f"""Select the best restaurant options for this group event.
 
 Authoritative cleaned group report:
-{json.dumps(report, indent=2)}
+{json.dumps(report, separators=(",", ":"), ensure_ascii=False)}
 
 Survey evidence ID: {payload.survey_id or "unavailable"}. If any group
 context is missing, contradictory, or unclear during tool calls, use the
@@ -357,32 +604,26 @@ def recommendations(
         survey_id=payload.survey_id,
         group_location=payload.location,
     )
-    try:
-        answer = run(_agent_prompt(payload), user_id=organizer_id, state=state)
-    except NoCredentialsError as exc:
-        # Return a CORS-compatible API error instead of letting Uvicorn turn
-        # an expected configuration problem into a browser CORS failure.
-        logger.info("recommendation request rejected: AWS credentials are unavailable")
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Recommendations are not configured on this server. "
-                "Sign in to AWS or configure the AWS profile used for Bedrock, then retry."
-            ),
-        ) from exc
-    except BotoCoreError as exc:
-        logger.warning("recommendation provider request failed: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail="The recommendation provider is temporarily unavailable. Please try again shortly.",
-        ) from exc
-    except Exception as exc:
-        logger.exception("recommendation request failed")
-        raise HTTPException(
-            status_code=502,
-            detail="The recommendation service could not complete the request. Please try again.",
-        ) from exc
-    return {"status": "ok", "answer": answer}
+    return _enqueue_recommendation(_agent_prompt(payload), organizer_id, state)
+
+
+@app.get("/api/recommendations/{run_id}")
+def recommendation_status(
+    run_id: str,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Return local recommendation progress and the eventual answer."""
+    organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
+    with _recommendation_runs_lock:
+        record = _recommendation_runs.get(run_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Recommendation run not found")
+        if record.get("organizer_id") != organizer_id:
+            raise HTTPException(status_code=404, detail="Recommendation run not found")
+        result = dict(record)
+    result.pop("organizer_id", None)
+    return result
 
 
 @app.post("/api/surveys/{survey_id}/recommendations")

@@ -12,16 +12,26 @@
       <div class="dinner-scene" aria-hidden="true"></div>
       <section class="invitation" aria-labelledby="event-creation-title">
         <div class="invitation-inner">
+          <a class="back-link" href="landing.html">← Back to home</a>
           <p class="eyebrow">A table is better shared</p>
           <h1 id="event-creation-title">Get The Crew Together</h1>
           <p class="intro">Choose the date, gather the answers, and let the evening begin.</p>
           <form id="signup-form" novalidate>
             <label for="organizer-email">Your email address</label>
-            <input id="organizer-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+            <input id="organizer-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" pattern="^[^\s@]+@[^\s@]+\.[^\s@]{2,}$" required />
             <button type="submit">Start planning <span aria-hidden="true">→</span></button>
-            <p class="form-note">We’ll use this only to keep your supper plans together.</p>
+            <p class="form-note">Local demo access is unguarded. Email verification will protect this in production.</p>
             <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
           </form>
+          <section class="organizer-choices" id="organizer-choices" aria-labelledby="organizer-choice-title" hidden>
+            <p class="eyebrow">Your supper plans</p>
+            <h2 id="organizer-choice-title">What would you like to do?</h2>
+            <div class="choice-list">
+              <a class="choice-card" href="index.html?organizer=1"><span><strong>View events</strong><small>Open your lightweight event shelf.</small></span><b aria-hidden="true">→</b></a>
+              <a class="choice-card featured" href="survey-creation.html"><span><strong>Create event</strong><small>Start with one date and a 6:00 PM time.</small></span><b aria-hidden="true">→</b></a>
+            </div>
+            <p class="form-note">No account or email verification is required for this demo.</p>
+          </section>
         </div>
       </section>
     </main>

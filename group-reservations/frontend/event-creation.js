@@ -4,6 +4,8 @@ const form = document.getElementById('signup-form');
 const email = document.getElementById('organizer-email');
 const message = document.getElementById('form-message');
 const submit = form.querySelector('button[type="submit"]');
+const choices = document.getElementById('organizer-choices');
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function setMessage(text, isError = false) {
   message.textContent = text;
@@ -12,7 +14,12 @@ function setMessage(text, isError = false) {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!email.reportValidity()) return;
+  if (!email.reportValidity() || !EMAIL_PATTERN.test(email.value.trim())) {
+    email.setCustomValidity('Enter a valid email address.');
+    email.reportValidity();
+    email.setCustomValidity('');
+    return;
+  }
 
   submit.disabled = true;
   setMessage('Setting your place at the table…');
@@ -28,8 +35,11 @@ form.addEventListener('submit', async (event) => {
     // Matches the existing app.js organizer persistence contract.
     localStorage.setItem('organizerEmail', email.value.trim());
     localStorage.setItem('organizerId', user.id);
-    setMessage('Your place is saved. Opening the survey settings…');
-    window.location.assign('survey-creation.html');
+    setMessage('Your place is saved.');
+    form.hidden = true;
+    form.style.display = 'none';
+    choices.hidden = false;
+    choices.style.display = 'grid';
   } catch (error) {
     setMessage(error instanceof Error ? error.message : 'Could not create organizer. Please try again.', true);
     submit.disabled = false;

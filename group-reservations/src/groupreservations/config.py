@@ -21,6 +21,9 @@ class Settings:
         "GROUP_RESERVATIONS_DATABASE_PATH", ".local/group-reservations.sqlite3"
     )
     public_app_url: str = os.getenv("PUBLIC_APP_URL", "http://localhost:4173")
+    recommendation_timeout_seconds: int = int(
+        os.getenv("GROUP_RESERVATIONS_RECOMMENDATION_TIMEOUT_SECONDS", "120")
+    )
 
 
 settings = Settings()

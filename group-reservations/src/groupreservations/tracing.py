@@ -7,7 +7,7 @@ import logging
 import os
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from strands.hooks import (
@@ -133,8 +133,9 @@ def _summary(result: Any) -> dict[str, Any]:
 class AgentTrace:
     """Hook-based trace that records actions without recording model reasoning."""
 
-    def __init__(self, organizer_id: str) -> None:
+    def __init__(self, organizer_id: str, on_phase: Callable[[str, str], None] | None = None) -> None:
         self.organizer_id = organizer_id
+        self.on_phase = on_phase
         self.previous_state: dict[str, Any] = {}
         self.token_stats = {
             "tool_calls": 0,
@@ -170,11 +171,14 @@ class AgentTrace:
 
     def before_tool(self, event: BeforeToolCallEvent) -> None:
         tool = event.tool_use.get("name", "unknown")
+        phase = _PHASES.get(tool, "agent_reasoning")
+        if self.on_phase:
+            self.on_phase(phase, tool)
         argument_tokens = _approx_tokens(event.tool_use.get("input", {}))
         self.token_stats["tool_calls"] += 1
         self.token_stats["estimated_agent_output_tokens"] += argument_tokens
         self._emit({
-            "phase": _PHASES.get(tool, "agent_reasoning"),
+            "phase": phase,
             "tool": tool,
             "arguments": event.tool_use.get("input", {}),
             "transition_reason": "agent selected next tool",

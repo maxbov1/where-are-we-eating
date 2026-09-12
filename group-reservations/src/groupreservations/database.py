@@ -222,6 +222,31 @@ def get_survey(identifier: str) -> dict[str, Any] | None:
         return survey
 
 
+def list_surveys_for_organizer(organizer_id: str) -> list[dict[str, Any]]:
+    """Return a compact organizer event shelf; never include guest answers."""
+    init_db()
+    with _connect() as db:
+        rows = db.execute(
+            "SELECT id,public_token,event_name,location,created_at,expires_at "
+            "FROM surveys WHERE organizer_id=? ORDER BY created_at DESC LIMIT 20",
+            (organizer_id,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            response_count = db.execute(
+                "SELECT COUNT(*) AS count FROM survey_responses WHERE survey_id=?",
+                (row["id"],),
+            ).fetchone()["count"]
+            result.append({
+                "id": row["id"], "public_token": row["public_token"],
+                "event_name": row["event_name"], "location": row["location"],
+                "created_at": row["created_at"], "expires_at": row["expires_at"],
+                "response_count": response_count,
+                "is_open": not _is_expired(row["expires_at"]),
+            })
+        return result
+
+
 def append_response(public_token: str, guest_token: str, dates: list[str], times: list[str], answers: dict[str, list[str]], origin_place_id: str | None = None, origin_label: str | None = None, origin_lat: float | None = None, origin_lng: float | None = None, availability: dict[str, list[str]] | None = None) -> dict[str, Any]:
     init_db(); token_hash = _hash_token(guest_token)
     availability = _normalize_availability(dates, times, availability)

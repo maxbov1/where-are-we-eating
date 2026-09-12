@@ -43,6 +43,42 @@ _INTERACTIVE_SELECTOR = (
     "button, [role='button'], [role='option'], [role='menuitem'], a, select, input, "
     "[role='combobox'], [data-value], [data-date], [data-time]"
 )
+_MAX_DOM_TEXT_CHARS = 800
+_MAX_AX_CHARS = 1400
+_MAX_ACTION_TRACE_STEPS = 10
+_MAX_IMAGE_BYTES = 1_500_000
+
+
+def _bound_model_payload(payload: dict[str, object]) -> None:
+    """Bound evidence fields before a tool result enters model history."""
+    dom = payload.get("dom")
+    if isinstance(dom, dict):
+        if isinstance(dom.get("text"), str):
+            dom["text"] = dom["text"][:_MAX_DOM_TEXT_CHARS]
+        controls = dom.get("controls")
+        if isinstance(controls, list):
+            dom["controls"] = controls[:30]
+            for control in dom["controls"]:
+                if isinstance(control, dict):
+                    for key in ("label", "placeholder", "context"):
+                        if isinstance(control.get(key), str):
+                            control[key] = control[key][:180]
+    if isinstance(payload.get("accessibility_snapshot"), str):
+        payload["accessibility_snapshot"] = payload["accessibility_snapshot"][:_MAX_AX_CHARS]
+    trace = payload.get("action_trace")
+    if isinstance(trace, list):
+        payload["action_trace"] = trace[:_MAX_ACTION_TRACE_STEPS]
+        for step in payload["action_trace"]:
+            if not isinstance(step, dict):
+                continue
+            for key in ("error", "label", "control"):
+                if isinstance(step.get(key), str):
+                    step[key] = step[key][:240]
+            checkpoint = step.get("post_action")
+            if isinstance(checkpoint, dict):
+                for key in ("text", "accessibility", "error"):
+                    if isinstance(checkpoint.get(key), str):
+                        checkpoint[key] = checkpoint[key][:500]
 
 
 def _is_skip_control(candidate: dict[str, object]) -> bool:
@@ -206,6 +242,7 @@ class ReservationBrowser:
             # escape hatch.
             if payload.get("success") is False or payload.get("status") == "blocked":
                 payload["agent_state"] = self.state.snapshot()
+        _bound_model_payload(payload)
         payload["available_actions"] = [
             {"tool": tool, "reason": action_reason} for tool, action_reason in actions
         ]
@@ -2005,7 +2042,7 @@ def _model_screenshot(path_value: object) -> dict[str, object] | None:
         return None
     data = path.read_bytes()
     # Bedrock rejects images at 5 MiB; keep headroom for transport overhead.
-    if len(data) >= 4_500_000:
+    if len(data) >= _MAX_IMAGE_BYTES:
         logger.warning("reservation_browser stage=model_screenshot_omitted path=%s bytes=%d",
                        path, len(data))
         return None
