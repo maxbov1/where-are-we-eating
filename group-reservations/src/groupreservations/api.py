@@ -7,12 +7,15 @@ import logging
 import threading
 import time
 import uuid
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from .opentable_mcp import run
@@ -25,9 +28,11 @@ from .database import (
     append_response,
     create_survey,
     create_user,
+    delete_survey,
     get_survey,
     list_surveys_for_organizer,
     init_db,
+    update_survey,
 )
 from .config import settings
 from .recommendation_response import parse_recommendation_answer
@@ -47,13 +52,55 @@ _RECOMMENDATION_STAGE_DEADLINES = {
     "cleanup": 480,
 }
 
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Small process-local limiter for the POC and a safe default at the edge."""
+
+    def __init__(self, app: FastAPI, limit: int, window_seconds: int = 60) -> None:
+        super().__init__(app)
+        self.limit = max(1, limit)
+        self.window_seconds = window_seconds
+        self._requests: defaultdict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/health" or not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        client = request.client.host if request.client else "unknown"
+        path = request.url.path
+        limit = self.limit
+        if request.method == "POST" and path.endswith("/recommendations"):
+            limit = min(limit, 10)
+        elif request.method == "POST" and path.endswith("/responses"):
+            limit = min(limit, 30)
+        elif request.method == "POST" and path in {"/api/users", "/api/surveys"}:
+            limit = min(limit, 20)
+        key = f"{client}:{request.method}:{path}"
+        now = time.monotonic()
+        with self._lock:
+            bucket = self._requests[key]
+            while bucket and bucket[0] <= now - self.window_seconds:
+                bucket.popleft()
+            if len(bucket) >= limit:
+                retry_after = max(1, int(self.window_seconds - (now - bucket[0])))
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many requests. Please try again shortly."},
+                    headers={"Retry-After": str(retry_after)},
+                )
+            bucket.append(now)
+        return await call_next(request)
+
+
 app = FastAPI(title="Where Are We Eating? Agent API", version="0.1.0")
+allowed_origins = [origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4173", "http://127.0.0.1:4173"],
-    allow_methods=["GET", "POST"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app",
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+app.add_middleware(RateLimitMiddleware, limit=settings.rate_limit_requests_per_minute)
 init_db()
 
 _recommendation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="recommendation")
@@ -327,6 +374,29 @@ class SurveyRequest(BaseModel):
         return value
 
 
+class SurveyUpdateRequest(BaseModel):
+    event_name: str | None = Field(default=None, min_length=1, max_length=120)
+    location: str | None = Field(default=None, min_length=1, max_length=160)
+    dates: list[str] | None = Field(default=None, min_length=1, max_length=3)
+    times: list[str] | None = Field(default=None, min_length=1, max_length=3)
+    availability: dict[str, list[str]] | None = None
+    questions: dict[str, list[str]] | None = None
+    location_place_id: str | None = Field(default=None, max_length=200)
+    location_lat: float | None = Field(default=None, ge=-90, le=90)
+    location_lng: float | None = Field(default=None, ge=-180, le=180)
+    expires_at: str | None = Field(default=None, max_length=40)
+
+    @field_validator("expires_at")
+    @classmethod
+    def _validate_update_expires_at(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                datetime.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError("expires_at must be an ISO 8601 timestamp") from exc
+        return value
+
+
 class SurveyResponseRequest(BaseModel):
     respondent_token: str = Field(min_length=8, max_length=120)
     dates: list[str] = Field(min_length=1, max_length=3)
@@ -393,9 +463,15 @@ def users(
 
 
 @app.post("/api/surveys")
-def surveys(payload: SurveyRequest) -> dict[str, object]:
+def surveys(
+    payload: SurveyRequest,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
     """Persist an organizer survey and return its public token."""
+    resolved = _resolve_organizer_id(authorization, x_organizer_id or payload.organizer_id)
     data = payload.model_dump()
+    data["organizer_id"] = resolved
     if not data["availability"]:
         data["availability"] = {date: list(data["times"]) for date in data["dates"]}
     survey = create_survey(**data)
@@ -407,6 +483,31 @@ def surveys(payload: SurveyRequest) -> dict[str, object]:
         "expires_at": survey["expires_at"],
         "survey": survey,
     }
+
+
+@app.patch("/api/surveys/{survey_id}")
+def survey_update(
+    survey_id: str,
+    payload: SurveyUpdateRequest,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
+    updated = update_survey(survey_id, organizer_id, **payload.model_dump(exclude_unset=True))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Survey not found")
+    return {"survey": updated}
+
+
+@app.delete("/api/surveys/{survey_id}", status_code=204)
+def survey_delete(
+    survey_id: str,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
+    if not delete_survey(survey_id, organizer_id):
+        raise HTTPException(status_code=404, detail="Survey not found")
 
 
 @app.get("/api/surveys/{public_token}")
@@ -460,11 +561,20 @@ def survey_response(public_token: str, payload: SurveyResponseRequest) -> dict[s
 
 
 @app.get("/api/surveys/{survey_id}/aggregate")
-def survey_aggregate(survey_id: str) -> dict[str, object]:
+def survey_aggregate(
+    survey_id: str,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
     """Return cleaned, vote-counted context for the recommendation agent."""
     result = aggregate_survey(survey_id)
     if not result:
         raise HTTPException(status_code=404, detail="Survey not found")
+    if authorization or x_organizer_id:
+        organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
+        survey_record = get_survey(survey_id)
+        if not survey_record or survey_record.get("organizer_id") != organizer_id:
+            raise HTTPException(status_code=404, detail="Survey not found")
     # Guest origins are private inputs for the recommendation run, not part of
     # the public aggregate inspection endpoint.
     private_fields = {"origin_place_id", "origin_label", "origin_lat", "origin_lng"}
@@ -560,6 +670,8 @@ def _resolve_organizer_id(
             return verify_access_token(token)
         except Exception as exc:
             raise HTTPException(status_code=401, detail="Invalid access token") from exc
+    if settings.require_auth:
+        raise HTTPException(status_code=401, detail="Bearer authentication required")
     return legacy_id or "local-organizer"
 
 
@@ -636,10 +748,11 @@ def survey_recommendations(
     record = get_survey(survey_id)
     if not record:
         raise HTTPException(status_code=404, detail="Survey not found")
+    organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
+    if record.get("organizer_id") != organizer_id:
+        raise HTTPException(status_code=404, detail="Survey not found")
     aggregate = aggregate_survey(survey_id)
     if not aggregate:
         raise HTTPException(status_code=404, detail="Survey not found")
     payload = _payload_from_aggregate(aggregate)
-    return recommendations(
-        payload, x_organizer_id=x_organizer_id, authorization=authorization
-    )
+    return recommendations(payload, x_organizer_id=organizer_id)

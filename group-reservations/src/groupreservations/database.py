@@ -185,6 +185,45 @@ def create_survey(organizer_id: str, event_name: str, location: str, dates: list
     return survey
 
 
+def update_survey(survey_id: str, organizer_id: str, **changes: Any) -> dict[str, Any] | None:
+    """Update organizer-owned survey configuration and return the fresh record."""
+    current = get_survey(survey_id)
+    if not current or current["organizer_id"] != organizer_id:
+        return None
+    values = {key: changes[key] for key in (
+        "event_name", "location", "location_place_id", "location_lat", "location_lng",
+        "dates", "times", "availability", "questions", "expires_at",
+    ) if key in changes and changes[key] is not None}
+    availability = _normalize_availability(
+        list(values.get("dates", current["dates"])),
+        list(values.get("times", current["times"])),
+        values.get("availability", current["availability"]),
+    )
+    values["availability"] = availability
+    values["dates"] = list(availability)
+    values["times"] = list(dict.fromkeys(slot for slots in availability.values() for slot in slots))
+    with _connect() as db:
+        db.execute(
+            "UPDATE surveys SET event_name=?,location=?,location_place_id=?,location_lat=?,location_lng=?,dates_json=?,times_json=?,availability_json=?,questions_json=?,expires_at=? WHERE id=? AND organizer_id=?",
+            (values.get("event_name", current["event_name"]), values.get("location", current["location"]),
+             values.get("location_place_id", current.get("location_place_id")), values.get("location_lat", current.get("location_lat")),
+             values.get("location_lng", current.get("location_lng")), json.dumps(values["dates"]), json.dumps(values["times"]),
+             json.dumps(values["availability"]), json.dumps(values.get("questions", current["questions"])),
+             values.get("expires_at", current.get("expires_at")), survey_id, organizer_id),
+        )
+        if "questions" in values:
+            db.execute("DELETE FROM survey_questions WHERE survey_id=?", (survey_id,))
+            _insert_questions(db, survey_id, values["questions"])
+    return get_survey(survey_id)
+
+
+def delete_survey(survey_id: str, organizer_id: str) -> bool:
+    """Delete an organizer-owned survey and its cascaded responses."""
+    with _connect() as db:
+        cursor = db.execute("DELETE FROM surveys WHERE id=? AND organizer_id=?", (survey_id, organizer_id))
+        return cursor.rowcount == 1
+
+
 def _question_map(db: sqlite3.Connection, survey_id: str) -> dict[str, tuple[str, dict[str, str]]]:
     rows = db.execute("SELECT q.id,q.question_key,o.id option_id,o.value FROM survey_questions q JOIN survey_options o ON o.question_id=q.id WHERE q.survey_id=? AND q.enabled=1 AND o.enabled=1 ORDER BY q.sort_order,o.sort_order", (survey_id,)).fetchall()
     result: dict[str, tuple[str, dict[str, str]]] = {}

@@ -66,6 +66,26 @@ organizer and should use encrypted per-user session storage in production.
 - `auth.py`: application JWT minting/verification and safe organizer IDs.
 - `config.py`: environment-backed AWS, Google, and JWT settings.
 
+## API contract and hardening
+
+The API supports the event lifecycle with `POST /api/surveys`, `GET` survey
+and organizer-shelf reads, `PATCH /api/surveys/{survey_id}`, and
+`DELETE /api/surveys/{survey_id}`. Updates and deletes are organizer-scoped;
+the local demo may use `X-Organizer-Id`, while deployed environments should
+set `GROUP_RESERVATIONS_REQUIRE_AUTH=true` and use an application JWT bearer
+token.
+
+CORS is configured through `GROUP_RESERVATIONS_CORS_ORIGINS` as a comma-separated
+allowlist, with local origins as the default and Vercel preview origins
+accepted by the `vercel.app` origin pattern. Set the production Vercel or
+custom-domain origin explicitly in the allowlist.
+
+The API applies an in-process sliding-window rate limiter keyed by client IP,
+method, and route. Recommendation starts, guest response writes, and account
+or survey creation have stricter limits than ordinary reads. Production should
+also enforce an edge/API-Gateway limiter because process-local state is not
+shared across replicas.
+
 The repository now contains a local web API and static survey UI. The local
 SQLite schema mirrors durable production storage, while Cognito and Aurora
 PostgreSQL are the production targets. SMS delivery remains a planned

@@ -24,6 +24,13 @@ class Settings:
     recommendation_timeout_seconds: int = int(
         os.getenv("GROUP_RESERVATIONS_RECOMMENDATION_TIMEOUT_SECONDS", "120")
     )
+    cors_allowed_origins: str = os.getenv(
+        "GROUP_RESERVATIONS_CORS_ORIGINS", "http://localhost:4173,http://127.0.0.1:4173"
+    )
+    require_auth: bool = os.getenv("GROUP_RESERVATIONS_REQUIRE_AUTH", "false").casefold() == "true"
+    rate_limit_requests_per_minute: int = int(
+        os.getenv("GROUP_RESERVATIONS_RATE_LIMIT_PER_MINUTE", "120")
+    )
 
 
 settings = Settings()
