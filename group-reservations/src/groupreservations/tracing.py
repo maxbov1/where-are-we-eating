@@ -10,7 +10,13 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from strands.hooks import AfterInvocationEvent, AfterToolCallEvent, BeforeToolCallEvent
+from strands.hooks import (
+    AfterInvocationEvent,
+    AfterModelCallEvent,
+    AfterToolCallEvent,
+    BeforeModelCallEvent,
+    BeforeToolCallEvent,
+)
 
 # Use the agent runner's configured logger so trace records appear alongside
 # the existing lifecycle messages in the local test entrypoint.
@@ -132,9 +138,24 @@ class AgentTrace:
         self.previous_state: dict[str, Any] = {}
         self.token_stats = {
             "tool_calls": 0,
+            "model_calls": 0,
             "estimated_agent_output_tokens": 0,
             "estimated_tool_context_tokens": 0,
             "largest_tool_context_tokens": 0,
+            "projected_input_tokens": 0,
+            "largest_projected_input_tokens": 0,
+            "cumulative_history_tokens": 0,
+            "tool_result_chars": 0,
+            "state_snapshot_chars": 0,
+            "dom_chars": 0,
+            "ax_chars": 0,
+            "action_trace_chars": 0,
+            "image_bytes": 0,
+            "actual_input_tokens": 0,
+            "actual_output_tokens": 0,
+            "actual_total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
         }
         # Debug mode should be sufficient to explain a stuck run. TRACE can be
         # enabled independently when callers want structured events without
@@ -163,7 +184,25 @@ class AgentTrace:
     def after_tool(self, event: AfterToolCallEvent) -> None:
         tool = event.tool_use.get("name", "unknown")
         context_tokens = _approx_tokens(event.result)
+        result_payload = _result_payload(event.result)
+        result_json = json.dumps(result_payload, ensure_ascii=False, default=str)
         self.token_stats["estimated_tool_context_tokens"] += context_tokens
+        self.token_stats["tool_result_chars"] += len(result_json)
+        if isinstance(result_payload, Mapping):
+            self.token_stats["state_snapshot_chars"] += len(json.dumps(
+                result_payload.get("agent_state") or {}, ensure_ascii=False, default=str
+            ))
+            for key in ("dom", "text"):
+                value = result_payload.get(key)
+                if value:
+                    self.token_stats["dom_chars"] += len(json.dumps(value, ensure_ascii=False, default=str))
+            if result_payload.get("accessibility_snapshot"):
+                self.token_stats["ax_chars"] += len(str(result_payload["accessibility_snapshot"]))
+            if result_payload.get("action_trace"):
+                self.token_stats["action_trace_chars"] += len(json.dumps(
+                    result_payload["action_trace"], ensure_ascii=False, default=str
+                ))
+        self.token_stats["image_bytes"] += self._image_bytes(event.result)
         self.token_stats["largest_tool_context_tokens"] = max(
             self.token_stats["largest_tool_context_tokens"], context_tokens
         )
@@ -179,9 +218,61 @@ class AgentTrace:
             "state_changes": state_changes,
         })
 
+    @staticmethod
+    def _image_bytes(value: Any) -> int:
+        """Best-effort count for image blocks without retaining image data."""
+        if isinstance(value, Mapping):
+            total = 0
+            for key, item in value.items():
+                if key == "bytes" and isinstance(item, (bytes, bytearray)):
+                    total += len(item)
+                else:
+                    total += AgentTrace._image_bytes(item)
+            return total
+        if isinstance(value, (list, tuple)):
+            return sum(AgentTrace._image_bytes(item) for item in value)
+        return 0
+
+    def before_model(self, event: BeforeModelCallEvent) -> None:
+        projected = int(event.projected_input_tokens or 0)
+        self.token_stats["model_calls"] += 1
+        self.token_stats["projected_input_tokens"] += projected
+        self.token_stats["cumulative_history_tokens"] += projected
+        self.token_stats["largest_projected_input_tokens"] = max(
+            self.token_stats["largest_projected_input_tokens"], projected
+        )
+        self._emit({
+            "phase": "model_call",
+            "tool": None,
+            "projected_input_tokens": projected,
+            "cumulative_history_tokens": self.token_stats["cumulative_history_tokens"],
+        })
+
+    def after_model(self, event: AfterModelCallEvent) -> None:
+        # Provider usage is surfaced by AgentResult.metrics after invocation;
+        # this hook records failures/retries without guessing token counts.
+        self._emit({
+            "phase": "model_call",
+            "tool": None,
+            "model_error": str(event.exception)[:240] if event.exception else None,
+            "retry": bool(event.retry),
+        })
+
     def after_invocation(self, event: AfterInvocationEvent) -> None:
         result = event.result
         status = getattr(result, "stop_reason", None) or "error"
+        metrics = getattr(result, "metrics", None)
+        usage = getattr(metrics, "accumulated_usage", None)
+        if usage:
+            for source, target in (
+                ("inputTokens", "actual_input_tokens"),
+                ("outputTokens", "actual_output_tokens"),
+                ("totalTokens", "actual_total_tokens"),
+                ("cacheReadInputTokens", "cache_read_input_tokens"),
+                ("cacheWriteInputTokens", "cache_write_input_tokens"),
+            ):
+                value = usage.get(source) if isinstance(usage, Mapping) else getattr(usage, source, 0)
+                self.token_stats[target] = int(value or 0)
         self._emit({
             "phase": "final",
             "tool": None,
@@ -194,4 +285,6 @@ class AgentTrace:
     def attach(self, agent: Any) -> None:
         agent.add_hook(self.before_tool, BeforeToolCallEvent)
         agent.add_hook(self.after_tool, AfterToolCallEvent)
+        agent.add_hook(self.before_model, BeforeModelCallEvent)
+        agent.add_hook(self.after_model, AfterModelCallEvent)
         agent.add_hook(self.after_invocation, AfterInvocationEvent)

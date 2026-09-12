@@ -244,9 +244,20 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
         estimated_output = int(stats["estimated_agent_output_tokens"])
         estimated_cost = (estimated_input * 3 + estimated_output * 15) / 1_000_000
         logger.info(
-            "agent stage=token_estimate_lower_bound tool_calls=%d estimated_input_tokens=%d "
-            "estimated_output_tokens=%d largest_tool_context_tokens=%d estimated_cost_usd=%.6f",
-            stats["tool_calls"], estimated_input, estimated_output,
+            "agent stage=token_telemetry tool_calls=%d model_calls=%d "
+            "estimated_input_tokens=%d estimated_output_tokens=%d "
+            "projected_input_tokens=%d cumulative_history_tokens=%d "
+            "actual_input_tokens=%d actual_output_tokens=%d actual_total_tokens=%d "
+            "cache_read_input_tokens=%d cache_write_input_tokens=%d "
+            "tool_result_chars=%d state_snapshot_chars=%d dom_chars=%d ax_chars=%d "
+            "action_trace_chars=%d image_bytes=%d largest_tool_context_tokens=%d estimated_cost_usd=%.6f",
+            stats["tool_calls"], stats["model_calls"], estimated_input, estimated_output,
+            stats["projected_input_tokens"], stats["cumulative_history_tokens"],
+            stats["actual_input_tokens"], stats["actual_output_tokens"],
+            stats["actual_total_tokens"], stats["cache_read_input_tokens"],
+            stats["cache_write_input_tokens"], stats["tool_result_chars"],
+            stats["state_snapshot_chars"], stats["dom_chars"], stats["ax_chars"],
+            stats["action_trace_chars"], stats["image_bytes"],
             stats["largest_tool_context_tokens"], estimated_cost,
         )
         completed_handoffs = [handoff for handoff in state.reservation_handoffs.values()

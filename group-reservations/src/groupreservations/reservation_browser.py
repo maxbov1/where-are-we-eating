@@ -148,6 +148,9 @@ class ReservationBrowser:
         # invalidate every other workflow.
         self.candidate_pages: dict[str, Page] = {}
         self.workflow_pages: dict[str, Page] = {}
+        # Detailed sweep records are retained for follow-up actions but are
+        # deliberately not serialized into every model-facing response.
+        self.surface_records: dict[str, dict[str, object]] = {}
         self.owner_thread_id: int | None = None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reservation-browser")
         self.state = state
@@ -196,7 +199,13 @@ class ReservationBrowser:
                     if error not in self.state.blockers:
                         self.state.blockers.append(error)
             self.state.set_actions(*actions)
-            payload["agent_state"] = self.state.snapshot()
+            # Full state is useful for failures/debugging, but repeating every
+            # workflow and observation on successful tool calls dominates the
+            # model context. Successful calls expose their local transition
+            # fields instead; the state tool remains the explicit full-state
+            # escape hatch.
+            if payload.get("success") is False or payload.get("status") == "blocked":
+                payload["agent_state"] = self.state.snapshot()
         payload["available_actions"] = [
             {"tool": tool, "reason": action_reason} for tool, action_reason in actions
         ]
@@ -603,6 +612,13 @@ class ReservationBrowser:
             surfaces.append(surface)
             self.candidate_pages[surface_id] = page
             self.workflow_pages[workflow_id] = page
+            self.surface_records[surface_id] = {
+                "surface_id": surface_id,
+                "workflow_id": workflow_id,
+                "frame_url": frame_url,
+                "surface_key": surface_key,
+                "records": members,
+            }
             if self.state:
                 parent_workflow_id = next(
                     (handoff_id for handoff_id, handoff in self.state.reservation_handoffs.items()
@@ -639,11 +655,6 @@ class ReservationBrowser:
             -len(item.get("controls", [])), str(item.get("heading") or ""),
         ))
         frame_map = [{"url": frame.url, "name": frame.name} for frame in page.frames]
-        ax_snapshot = None
-        try:
-            ax_snapshot = page.locator("body").aria_snapshot(timeout=5_000)
-        except Exception:
-            pass
         screenshot_path = None
         try:
             evidence_dir = self.profile_dir / "observations"
@@ -656,23 +667,62 @@ class ReservationBrowser:
         self._log("page_sweep_complete", url=page.url, page_id=id(page),
                   region_count=len(regions), surface_count=len(surfaces), frame_count=len(frame_map),
                   workflow_ids=[str(item.get("workflow_id")) for item in surfaces])
+        # Keep detailed region records server-side. The model only needs a
+        # compact index to select the next surface; reservation_expand can
+        # retrieve the detailed controls for that surface later.
         model_surfaces = []
         for surface in surfaces:
-            view = {key: value for key, value in surface.items() if key != "region_ids"}
-            view["action_url_evidence"] = [
-                {key: evidence.get(key) for key in ("url", "tag", "label")}
-                for evidence in surface.get("action_url_evidence", [])[:8]
-            ]
-            model_surfaces.append(view)
+            controls = surface.get("controls") or []
+            signals = surface.get("signals") or {}
+            model_surfaces.append({
+                "surface_id": surface["surface_id"],
+                "workflow_id": surface["workflow_id"],
+                "kind": surface["kind"],
+                "frame_url": surface["frame_url"],
+                "heading": surface.get("heading", ""),
+                "signals": signals,
+                "control_summary": {
+                    "total": len(controls),
+                    "buttons": sum(1 for item in controls if item.get("tag") == "button"),
+                    "forms": int(bool(signals.get("has_form"))),
+                    "inputs": sum(1 for item in controls if item.get("tag") in {"input", "select", "textarea"}),
+                    "iframes": sum(1 for item in controls if item.get("tag") == "iframe"),
+                },
+                "reservation_control_labels": [
+                    str(item.get("label") or "")[:160]
+                    for item in controls
+                    if _reservation_signal(item)
+                ][:12],
+                "action_urls": list(surface.get("action_urls") or [])[:8],
+            })
+        link_inventory = []
+        seen_links: set[str] = set()
+        region_surface_ids = {
+            str(record.get("candidate_id")): surface["surface_id"]
+            for surface in surfaces
+            for record in self.surface_records.get(surface["surface_id"], {}).get("records", [])
+            if isinstance(record, dict) and record.get("candidate_id")
+        }
+        for region in regions:
+            link = str(region.get("href") or "")
+            if not link or link in seen_links or _is_skip_control(region):
+                continue
+            seen_links.add(link)
+            link_inventory.append({
+                "url": link,
+                "kind": "iframe" if region.get("tag") == "iframe" else
+                        "form" if region.get("tag") == "form" else "link",
+                "label": str(region.get("label") or "")[:160],
+                "reservation_signal": _reservation_signal(region),
+                "surface_id": region_surface_ids.get(str(region.get("candidate_id"))),
+            })
+            if len(link_inventory) >= 40:
+                break
         return self._response({
             "success": True, "url": page.url, "candidate_id": _candidate_id(page.url),
             "candidate": {"candidate_id": _candidate_id(page.url), "url": page.url},
-            "surfaces": model_surfaces, "frames": frame_map,
+            "surfaces": model_surfaces, "links": link_inventory, "frames": frame_map,
             "region_count": len(regions),
-            # The model needs surface labels and controls here; the full page
-            # text/AX tree is redundant with reservation_expand.
-            "text": " ".join(page.locator("body").inner_text().split())[:1500],
-            "accessibility_snapshot": str(ax_snapshot or "")[:1200],
             "screenshot_path": screenshot_path,
         }, (("reservation_expand", "Expand an agent-selected page or frame region"),
             ("reservation_sweep", "Repeat the complete page sweep after loading changes"),
@@ -945,19 +995,35 @@ class ReservationBrowser:
                                   phase="reservation_inspection", reason="observation requested without a page")
 
         self._log("observation_start", candidate_id=candidate_id, url=url)
-        controls = target.locator("input, select, textarea, button, a, [role], iframe, form").evaluate_all(
-            """els => els.slice(0, 60).map(el => ({
+        surface_record = getattr(self, "surface_records", {}).get(self._surface_id(candidate_id), {})
+        surface_key = str(surface_record.get("surface_key") or "")
+        controls = target.locator(
+            "input, select, textarea, button, iframe, form, "
+            "[role='button'], [role='option'], [role='combobox'], "
+            "a[href*='reserv' i], a[href*='book' i], a[href*='table' i], "
+            "a[href*='opentable' i], a[href*='resy' i], a[href*='tock' i]"
+        ).evaluate_all(
+            """(els, expectedSurfaceKey) => els.filter(el => {
+                if (!expectedSurfaceKey || expectedSurfaceKey.startsWith('frame:')) return true;
+                const root = el.closest('form, dialog, [role="dialog"], main, section, nav, header, footer');
+                if (!root) return false;
+                const key = `${root.tagName.toLowerCase()}|${root.id || root.getAttribute('aria-label') ||
+                  (root.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 180)}`;
+                return key === expectedSurfaceKey;
+            }).slice(0, 60).map(el => ({
                 tag: el.tagName.toLowerCase(), type: el.type || null,
                 name: el.name || null, id: el.id || null,
                 href: el.href || null, placeholder: el.placeholder || null,
                 role: el.getAttribute('role') || null,
                 label: el.getAttribute('aria-label') || el.innerText || el.title || null,
                 disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true'
-            }))"""
+            }))""", surface_key
         )
+        # Retain only controls relevant to the selected reservation surface.
+        controls = [item for item in controls if not _is_skip_control(item)]
         dom = {
             "url": url,
-            "text": " ".join(target.locator("body").inner_text().split())[:3000],
+            "text": " ".join(target.locator("body").inner_text().split())[:1000],
             "controls": controls,
         }
         ax_snapshot = None
@@ -997,7 +1063,7 @@ class ReservationBrowser:
             "candidate": {"candidate_id": candidate_id, "url": url},
             "url": url,
             "dom": dom,
-            "accessibility_snapshot": str(ax_snapshot or "")[:3000],
+            "accessibility_snapshot": str(ax_snapshot or "")[:1200],
             "screenshot_path": screenshot_path,
             "warnings": warnings,
             }, (("reservation_fill", "Fill an identified non-sensitive booking field"),
@@ -1465,7 +1531,12 @@ class ReservationBrowser:
                 return {"after": action, "observation_error": str(exc)[:240]}
 
         def record(action: str, success: bool, **details: object) -> bool:
-            details.setdefault("post_action", observe_transition(action))
+            # Keep checkpoints on failures and the final availability choice;
+            # repeating body/AX snippets after every field fill inflates the
+            # conversation without helping the next deterministic action.
+            checkpoint = observe_transition(action)
+            if not success or action == "select_available_time":
+                details.setdefault("post_action", checkpoint)
             trace.append({"step": len(trace) + 1, "action": action, "success": success, **details})
             return success
 

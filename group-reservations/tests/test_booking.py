@@ -208,6 +208,29 @@ def test_browser_candidate_identity_is_stable_and_url_bound():
     assert first != different_url
 
 
+def test_successful_browser_responses_do_not_repeat_full_agent_state():
+    browser = _fake_browser()
+
+    result = json.loads(browser._response(
+        {"success": True, "url": browser.page.url},
+        phase="reservation_scan",
+    ))
+
+    assert "agent_state" not in result
+    assert result["candidate_id"] == _candidate_id(browser.page.url)
+
+
+def test_failed_browser_responses_keep_state_for_recovery():
+    browser = _fake_browser()
+
+    result = json.loads(browser._response(
+        {"success": False, "url": browser.page.url, "error": "blocked"},
+        phase="reservation_scan",
+    ))
+
+    assert result["agent_state"]["last_error"] == "blocked"
+
+
 class _FakeResponse:
     status = 200
 
