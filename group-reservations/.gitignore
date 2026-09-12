@@ -6,3 +6,7 @@ node_modules/
 .env
 .local/
 *.egg-info/
+.env.local
+.DS_Store
+agentcore/.cli/
+agentcore/.*.swp

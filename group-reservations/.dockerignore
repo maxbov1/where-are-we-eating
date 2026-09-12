@@ -1,0 +1,35 @@
+# Keep the root Docker context minimal. AgentCore needs only the package
+# metadata, Python source, and runtime adapter.
+.env
+.env.*
+**/.env
+**/.env.*
+.git
+**/.git
+.venv
+**/.venv
+node_modules
+**/node_modules
+__pycache__
+**/__pycache__
+.pytest_cache
+**/.pytest_cache
+.DS_Store
+**/.DS_Store
+.local/
+agentcore/
+frontend/
+tests/
+scripts/
+
+# Start from an empty context and whitelist the container inputs.
+**
+!pyproject.toml
+!src/
+!src/**
+!app/
+!app/waweagent/
+!app/waweagent/Dockerfile
+!app/waweagent/main.py
+!app/api/
+!app/api/Dockerfile

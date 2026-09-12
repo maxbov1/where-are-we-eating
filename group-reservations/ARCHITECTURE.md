@@ -1,5 +1,23 @@
 # Group Reservations Architecture
 
+## AgentCore runtime layout
+
+AgentCore is a single project rooted at `agentcore/`. The runtime adapter and
+its Dockerfile live in `app/waweagent/`; the repository root is the explicit
+Docker build context because the image installs the package from `src/`.
+
+```text
+repository root
+├── app/waweagent/       # main.py, Dockerfile, runtime policy file
+├── src/                 # groupreservations package
+├── frontend/
+└── agentcore/           # agentcore.json, targets, CDK project
+```
+
+`.dockerignore` reduces that root context to `pyproject.toml`, `src/`, and
+the adapter files. Validate the image with plain Docker before running
+`agentcore deploy`.
+
 ## System context
 
 ```text

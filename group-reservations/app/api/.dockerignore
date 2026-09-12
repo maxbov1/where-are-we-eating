@@ -1,0 +1,5 @@
+# This file documents the minimal inputs when app/api is used as a build
+# configuration directory. The CI build uses the repository root as context
+# so the Dockerfile can COPY the shared src/ package.
+*
+!Dockerfile
