@@ -239,7 +239,7 @@ class _FakeLocator:
     def __init__(self, candidates):
         self.candidates = candidates
 
-    def evaluate_all(self, _script):
+    def evaluate_all(self, _script, *_args):
         return self.candidates
 
     def inner_text(self):
