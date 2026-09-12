@@ -69,3 +69,6 @@ h1,h2,p { margin-top:0; } h1,h2 { letter-spacing:-.055em; } h1 { font-family:'Ne
 .button,.text-button { min-height:48px; }
 .text-button { display:inline-flex; align-items:center; justify-content:center; }
 .button:focus-visible,.text-button:focus-visible { outline:3px solid rgba(64,82,56,.3); outline-offset:3px; }
+.builder-form-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+.builder-form-heading .card-kicker { margin:0; }
+.builder-form-heading .text-button { margin:0; }
