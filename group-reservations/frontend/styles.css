@@ -1,9 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
-
 :root { --ink:#29231f; --muted:#756a62; --paper:#fbf5ea; --card:#fffdf8; --line:#e5d8c5; --sage:#c9d2a5; --forest:#405238; --coral:#a84730; --terracotta:var(--coral); --cream:#f3e3c8; --saffron:#e6a93d; --aubergine:#543d51; --shadow:0 20px 50px rgba(102,62,35,.1); --radius:22px; }
 * { box-sizing:border-box; }
 html { overflow-x:hidden; }
-body { margin:0; min-width:320px; background:var(--paper); color:var(--ink); font-family:'Alegreya Sans',sans-serif; overflow-x:hidden; }
+body { margin:0; min-width:320px; background:var(--paper); color:var(--ink); font-family:var(--font-ui); overflow-x:hidden; }
 button,input,textarea { font:inherit; }
 button { cursor:pointer; }
 .shell { min-height:100vh; background:radial-gradient(circle at 80% 0%,#f4d9a7 0,transparent 24rem),radial-gradient(circle at 0% 65%,#e8dfc0 0,transparent 22rem),var(--paper); }
@@ -11,7 +9,7 @@ button { cursor:pointer; }
 .screen.active { display:block; }
 .hero-copy { max-width:760px; margin:45px auto 42px; text-align:center; }
 .eyebrow,.card-kicker { color:var(--coral); font-size:11px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; }
-h1,h2,p { margin-top:0; } h1,h2 { letter-spacing:-.055em; } h1 { font-family:'Newsreader',serif; font-size:clamp(46px,7vw,82px); font-weight:500; line-height:.95; margin:17px 0 20px; } h2 { font-family:'Newsreader',serif; font-size:31px; font-weight:500; margin:10px 0 27px; } em { color:var(--aubergine); font-family:'Newsreader',serif; font-weight:500; }
+h1,h2,p { margin-top:0; } h1,h2 { letter-spacing:-.055em; } h1 { font-family:var(--font-display); font-size:clamp(46px,7vw,82px); font-weight:600; line-height:.95; margin:17px 0 20px; } h2 { font-family:var(--font-display); font-size:31px; font-weight:600; margin:10px 0 27px; } em { color:var(--aubergine); font-family:var(--font-display); font-weight:600; }
 .lede { color:var(--muted); font-size:18px; line-height:1.6; margin:auto; max-width:480px; }
 .card { background:rgba(255,254,250,.9); border:1px solid rgba(206,211,198,.9); border-radius:var(--radius); box-shadow:var(--shadow); }
 .auth-card { width:100%; max-width:420px; margin:auto; padding:34px; } label { display:grid; gap:8px; color:var(--muted); font-size:13px; font-weight:600; min-width:0; } .label-note { color:var(--muted); font-size:11px; font-weight:400; } input,textarea,select { width:100%; min-width:0; border:1px solid var(--line); border-radius:12px; background:#fff; color:var(--ink); outline:none; padding:13px 14px; } input:focus,textarea:focus,select:focus { border-color:var(--forest); box-shadow:0 0 0 3px rgba(64,82,56,.1); }
@@ -72,3 +70,6 @@ h1,h2,p { margin-top:0; } h1,h2 { letter-spacing:-.055em; } h1 { font-family:'Ne
 .builder-form-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
 .builder-form-heading .card-kicker { margin:0; }
 .builder-form-heading .text-button { margin:0; }
+
+/* Shared controls stay on the same accessible sizing scale across the app. */
+.button { min-height:var(--control-height); border-radius:var(--radius-control); gap:var(--space-5); padding:var(--space-3) var(--space-5); }
