@@ -15,7 +15,11 @@ def test_recommendation_starts_background_run_with_cors_headers(monkeypatch):
         "report": {},
         "responses": [],
     }
-    monkeypatch.setattr(api, "get_survey", lambda identifier: {"id": identifier})
+    monkeypatch.setattr(
+        api,
+        "get_survey",
+        lambda identifier: {"id": identifier, "organizer_id": "local-organizer"},
+    )
     monkeypatch.setattr(api, "aggregate_survey", lambda identifier: aggregate)
     monkeypatch.setattr(api, "run", lambda *args, **kwargs: "demo answer")
 
