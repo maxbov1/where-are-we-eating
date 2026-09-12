@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Mapping
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -137,6 +138,8 @@ class AgentTrace:
         self.organizer_id = organizer_id
         self.on_phase = on_phase
         self.previous_state: dict[str, Any] = {}
+        self._tool_started_at: dict[str, float] = {}
+        self._model_started_at: float | None = None
         self.token_stats = {
             "tool_calls": 0,
             "model_calls": 0,
@@ -171,6 +174,8 @@ class AgentTrace:
 
     def before_tool(self, event: BeforeToolCallEvent) -> None:
         tool = event.tool_use.get("name", "unknown")
+        tool_id = str(event.tool_use.get("toolUseId") or tool)
+        self._tool_started_at[tool_id] = time.monotonic()
         phase = _PHASES.get(tool, "agent_reasoning")
         if self.on_phase:
             self.on_phase(phase, tool)
@@ -187,6 +192,9 @@ class AgentTrace:
 
     def after_tool(self, event: AfterToolCallEvent) -> None:
         tool = event.tool_use.get("name", "unknown")
+        tool_id = str(event.tool_use.get("toolUseId") or tool)
+        started_at = self._tool_started_at.pop(tool_id, None)
+        duration_ms = round((time.monotonic() - started_at) * 1000, 1) if started_at else None
         context_tokens = _approx_tokens(event.result)
         result_payload = _result_payload(event.result)
         result_json = json.dumps(result_payload, ensure_ascii=False, default=str)
@@ -216,6 +224,7 @@ class AgentTrace:
             "phase": _PHASES.get(tool, "agent_reasoning"),
             "tool": tool,
             "tool_result_summary": result,
+            "duration_ms": duration_ms,
             "evidence_ids": result.get("evidence_ids", []),
             "source_urls": result.get("source_urls", []),
             "transition_reason": "tool completed; agent loop continues",
@@ -238,6 +247,7 @@ class AgentTrace:
         return 0
 
     def before_model(self, event: BeforeModelCallEvent) -> None:
+        self._model_started_at = time.monotonic()
         projected = int(event.projected_input_tokens or 0)
         self.token_stats["model_calls"] += 1
         self.token_stats["projected_input_tokens"] += projected
@@ -260,6 +270,7 @@ class AgentTrace:
             "tool": None,
             "model_error": str(event.exception)[:240] if event.exception else None,
             "retry": bool(event.retry),
+            "duration_ms": round((time.monotonic() - self._model_started_at) * 1000, 1) if self._model_started_at else None,
         })
 
     def after_invocation(self, event: AfterInvocationEvent) -> None:
