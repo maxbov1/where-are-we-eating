@@ -30,7 +30,7 @@ def _add_source_path() -> None:
 
 _add_source_path()
 
-from groupreservations.opentable_mcp import run  # noqa: E402
+from groupreservations.agent import run  # noqa: E402
 
 
 def _request_values(payload: Any) -> tuple[str | None, str]:

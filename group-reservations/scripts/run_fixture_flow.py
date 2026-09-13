@@ -7,7 +7,7 @@ from pathlib import Path
 
 from groupreservations.api import _agent_prompt, _payload_from_aggregate
 from groupreservations.database import aggregate_survey, append_response, create_survey, create_user
-from groupreservations.opentable_mcp import run
+from groupreservations.agent import run
 
 
 def main() -> int:

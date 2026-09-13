@@ -11,7 +11,7 @@ from strands import tool
 from .adapters.google_places import get_place, search_places
 from .config import settings
 
-logger = logging.getLogger("groupreservations.opentable_mcp")
+logger = logging.getLogger("groupreservations.agent")
 
 
 @tool

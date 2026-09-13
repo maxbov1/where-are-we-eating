@@ -1,4 +1,4 @@
-"""HTTP boundary for the local POC and a future AgentCore entrypoint."""
+"""FastAPI boundary for the web app and deployed AgentCore runtime."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from .opentable_mcp import run
+from .agentcore_client import invoke_agentcore
 from .auth import verify_access_token
 from .agent_state import AgentState
 from .adapters.google_places import autocomplete_locations, get_location_details
@@ -106,22 +106,41 @@ init_db()
 _recommendation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="recommendation")
 _recommendation_runs: dict[str, dict[str, object]] = {}
 _recommendation_runs_lock = threading.Lock()
-_DEMO_FALLBACK_ANSWER = """Demo fallback recommendation (the live research run was unavailable).
-
-Primary — Roka Akor San Francisco
-Japanese robata, sushi, and Wagyu in Jackson Square. Best fit for a special group dinner.
-Booking link: https://www.opentable.com/r/roka-akor-san-francisco
-Availability: live availability was not verified in fallback mode.
-
-Alternative — Ozumo San Francisco
-Contemporary Japanese sushi and robata near the Embarcadero. Good waterfront group option.
-Booking link: https://www.ozumosanfrancisco.com/
-
-Alternative — Akari Japanese Bistro
-An intimate Japanese bistro with a more relaxed feel.
-Booking link: https://www.akari-japanese.com/reservation
-
-No reservation has been made. Review the restaurant links and confirm the final date, time, and party size directly."""
+_DEMO_FALLBACK_ANSWER = """{
+  "status": "blocked",
+  "group_fit": "Live research was unavailable, so these seeded options are tentative. Review the links directly before choosing a restaurant.",
+  "primary": {
+    "name": "Roka Akor San Francisco",
+    "description": "Japanese robata, sushi, and Wagyu in Jackson Square.",
+    "tradeoff": "A strong fit for a special group dinner.",
+    "traits": ["Japanese", "Special occasion", "Group-friendly"],
+    "availability": {"status": "unknown", "summary": "Live availability was not verified in fallback mode."},
+    "restaurant_url": "https://www.rokaakor.com/san-francisco/",
+    "reservation": {"status": "unknown", "url": "https://www.opentable.com/r/roka-akor-san-francisco", "provider": "OpenTable", "label": "Open Roka Akor reservation options"}
+  },
+  "alternatives": [
+    {
+      "name": "Ozumo San Francisco",
+      "description": "Contemporary Japanese sushi and robata near the Embarcadero.",
+      "traits": ["Japanese", "Waterfront", "Group-friendly"],
+      "tradeoff": "A good waterfront group option.",
+      "restaurant_url": "https://www.ozumosanfrancisco.com/",
+      "availability": {"status": "unknown", "summary": "Live availability was not verified in fallback mode."},
+      "reservation": {"status": "unknown", "url": "https://www.ozumosanfrancisco.com/", "provider": "Restaurant website", "label": "Open Ozumo reservation options"}
+    },
+    {
+      "name": "Akari Japanese Bistro",
+      "description": "An intimate Japanese bistro with a more relaxed feel.",
+      "traits": ["Japanese", "Intimate", "Relaxed"],
+      "tradeoff": "Best for a quieter, lower-key dinner.",
+      "restaurant_url": "https://www.akari-japanese.com/",
+      "availability": {"status": "unknown", "summary": "Live availability was not verified in fallback mode."},
+      "reservation": {"status": "unknown", "url": "https://www.akari-japanese.com/reservation", "provider": "Restaurant website", "label": "Open Akari reservation options"}
+    }
+  ],
+  "blocker": {"code": "LIVE_RESEARCH_UNAVAILABLE", "title": "I can't complete further than this", "explanation": "Live reservation verification was unavailable, so no availability or reservation is being claimed.", "next_step": "Open a restaurant link and confirm availability directly."},
+  "next_steps": ["Confirm the date, time, and party size directly with the restaurant."]
+}"""
 
 
 def _set_recommendation_run(run_id: str, **changes: object) -> dict[str, object] | None:
@@ -181,7 +200,7 @@ def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: Agen
 
     on_phase("agent_reasoning", "start")
     try:
-        answer = run(prompt, user_id=organizer_id, state=state, progress_callback=on_phase)
+        answer = invoke_agentcore(prompt, user_id=organizer_id)
     except Exception as exc:
         record = _set_recommendation_run(run_id, last_error_type=type(exc).__name__)
         logger.exception(
@@ -645,15 +664,33 @@ Google Maps, restaurant website, and the generic booking link plus its
 provider. Prefer the restaurant website's explicit booking link; OpenTable is
 only one possible provider. Never fabricate a provider URL. A listing URL does
 not prove availability; report those as separate facts.
-Format the answer compactly: no markdown tables, no duplicated decision
-summary, and no full response-by-response vote dump. Use this order: one-line
-confidence/tie note only when it affects the choice; primary recommendation
-with 3-5 key fit facts and exact links; up to two alternatives as one short
-paragraph each with the key tradeoff and booking link; then end with this
-confirmation request using the selected values and prepared booking URL:
-"Confirm reservation for your group of X at Y on DATE at TIME? [Confirm
-reservation](URL)". The link is a human confirmation handoff; never imply the
-reservation is already made.
+Return ONLY valid JSON. Do not wrap it in Markdown fences and do not add prose
+before or after it. Use exactly this shape:
+{{
+  "status": "ready" or "blocked",
+  "group_fit": "1-2 concise sentences explaining why the group choices led to the primary",
+  "primary": {{
+    "name": "restaurant name",
+    "description": "one factual sentence describing the place from verified Google Places evidence",
+    "tradeoff": "one sentence about the fit or tradeoff",
+    "traits": ["cuisine", "vibe", "price or dietary fact when verified"],
+    "availability": {{"status":"verified" or "unknown" or "unavailable", "summary":"what was verified for the selected date/time", "checked_at":"ISO timestamp or null", "source_url":"exact evidence URL or null"}},
+    "reservation": {{"status":"available" or "unknown" or "unavailable", "url":"exact observed/prepared booking URL or null", "provider":"provider name or null", "label":"Get [restaurant]'s reservation"}}
+  }},
+  "alternatives": [
+    {{"name":"...", "description":"...", "traits":[], "tradeoff":"...", "availability":{{}}, "restaurant_url":"...", "reservation":{{}}}},
+    {{"name":"...", "description":"...", "traits":[], "tradeoff":"...", "availability":{{}}, "restaurant_url":"...", "reservation":{{}}}}
+  ],
+  "blocker": {{"code":"...","title":"...","explanation":"...","next_step":"..."}} or null,
+  "next_steps": ["one or two safe actions the organizer can take next"]
+}}
+The UI turns the primary and alternatives into linked restaurant cards and turns
+reservation.url values into buttons. Never fabricate a URL. Never claim that a
+reservation was made; a reservation URL is only a human handoff for organizer review.
+If reservation verification or browser automation is unavailable, set status to
+"blocked", preserve the restaurant recommendations, set availability.status to
+"unknown", and explain the blocker in blocker. Do not replace
+the recommendations with an error message.
     """
 
 

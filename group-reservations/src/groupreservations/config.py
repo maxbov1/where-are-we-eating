@@ -38,6 +38,8 @@ def _google_places_api_key() -> str:
 @dataclass(frozen=True)
 class Settings:
     aws_region: str = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-west-2"))
+    agentcore_runtime_arn: str = os.getenv("AGENTCORE_RUNTIME_ARN", "")
+    agentcore_region: str = os.getenv("AGENTCORE_REGION", aws_region)
     model_id: str = os.getenv(
         "GROUP_RESERVATIONS_MODEL_ID", "global.anthropic.claude-sonnet-4-6"
     )

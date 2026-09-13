@@ -21,7 +21,7 @@ from strands.hooks import (
 
 # Use the agent runner's configured logger so trace records appear alongside
 # the existing lifecycle messages in the local test entrypoint.
-logger = logging.getLogger("groupreservations.opentable_mcp")
+logger = logging.getLogger("groupreservations.agent")
 _SECRET = re.compile(r"token|secret|password|cookie|authorization|credential|api[_-]?key", re.I)
 _PHASES = {
     "survey_get_evidence": "evidence_recovery",

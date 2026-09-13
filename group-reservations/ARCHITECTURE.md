@@ -54,7 +54,7 @@ organizer and should use encrypted per-user session storage in production.
 - `adapters/google_places.py`: REST calls to Google Places search and details.
 - `places_tools.py`: Strands-compatible tools that search and immediately
   hydrate Google restaurant candidates.
-- `opentable_mcp.py`: Bedrock-backed Strands agent and organizer-scoped browser
+- `agent.py`: Bedrock-backed Strands agent and organizer-scoped browser
   reservation workflow. Google Places owns discovery; provider pages are
   inspected through explicit, verified browser candidates.
 - `reservation_browser.py`: serialized Playwright browser tools. After
@@ -75,8 +75,10 @@ organizer and should use encrypted per-user session storage in production.
   workflow state, structured recovery errors, and permitted next actions
   without exposing model chain-of-thought.
 - `api.py`: FastAPI HTTP boundary accepting structured survey responses and
-  invoking the agent. This boundary is deliberately portable to an AgentCore
-  runtime later.
+  invoking the deployed AgentCore runtime through `agentcore_client.py`.
+- `agentcore_client.py`: AWS SDK data-plane client for `InvokeAgentRuntime`.
+  The ECS API does not run a second local agent; production requires
+  `AGENTCORE_RUNTIME_ARN`.
 - `database.py`: SQLite persistence mirroring the production schema. `users`
   stores organizers and temporary guests; `surveys`, `survey_questions`, and
   `survey_options` store the invitation; `survey_responses` and

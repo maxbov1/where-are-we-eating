@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+from importlib.metadata import version as package_version
 import logging
 import os
 import re
@@ -354,7 +355,14 @@ class ReservationBrowser:
         user_id_hash = hashlib.sha256(self.profile_dir.parent.name.encode()).hexdigest()[:12]
         self._log("browser_start", user_id_hash=user_id_hash)
         self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=True)
+        try:
+            self.browser = self.playwright.chromium.launch(headless=True)
+        except Exception:
+            logger.exception(
+                "reservation_browser stage=browser_launch_failed playwright_version=%s executable=%s",
+                package_version("playwright"), self.playwright.chromium.executable_path,
+            )
+            raise
         context = self.browser.new_context()
         self.page = context.new_page()
         self.owner_thread_id = threading.get_ident()

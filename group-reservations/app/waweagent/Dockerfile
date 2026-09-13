@@ -11,6 +11,7 @@ COPY src /app/src
 COPY app/waweagent/main.py /app/main.py
 
 RUN pip install --no-cache-dir . \
+    && python -m playwright install chromium \
     && chown -R pwuser:pwuser /app
 
 USER pwuser

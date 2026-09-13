@@ -10,6 +10,7 @@ COPY pyproject.toml /app/pyproject.toml
 COPY src /app/src
 
 RUN pip install --no-cache-dir . \
+    && python -m playwright install chromium \
     && mkdir -p /app/.local \
     && chown -R pwuser:pwuser /app
 

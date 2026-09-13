@@ -8,14 +8,61 @@ have to infer workflow state from arbitrary text.
 from __future__ import annotations
 
 import re
+import json
 from urllib.parse import urlsplit
 from typing import Any
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 _MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", re.I)
 _PLAIN_URL = re.compile(r"https?://[^\s<>\]\)\"']+", re.I)
 _BOOKING_WORDS = re.compile(r"book|reserv|opentable|resy|tock|find a table", re.I)
 _CONFIRM_WORDS = re.compile(r"confirm reservation|confirm booking|final booking", re.I)
+
+
+class AvailabilityEvidence(BaseModel):
+    """Evidence state shown beside a restaurant recommendation."""
+
+    model_config = ConfigDict(extra="ignore")
+    status: Literal["verified", "unknown", "unavailable"] = "unknown"
+    summary: str = Field(default="Availability was not verified.", max_length=500)
+    checked_at: str | None = None
+    source_url: str | None = None
+
+
+class ReservationHandoff(BaseModel):
+    """A safe external handoff; this never means a reservation was made."""
+
+    model_config = ConfigDict(extra="ignore")
+    status: Literal["available", "unknown", "unavailable"] = "unknown"
+    url: str | None = None
+    provider: str | None = None
+    label: str = Field(default="Open reservation options", max_length=160)
+
+
+class RestaurantRecommendation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str = Field(min_length=1, max_length=160)
+    restaurant_url: str | None = None
+    description: str = Field(default="", max_length=500)
+    traits: list[str] = Field(default_factory=list, max_length=6)
+    tradeoff: str = Field(default="", max_length=500)
+    availability: AvailabilityEvidence = Field(default_factory=AvailabilityEvidence)
+    reservation: ReservationHandoff = Field(default_factory=ReservationHandoff)
+
+
+class RecommendationContract(BaseModel):
+    """The model-to-UI contract for one recommendation result."""
+
+    model_config = ConfigDict(extra="ignore")
+    status: Literal["ready", "blocked"] = "ready"
+    group_fit: str = Field(default="", max_length=700)
+    primary: RestaurantRecommendation
+    alternatives: list[RestaurantRecommendation] = Field(default_factory=list, max_length=2)
+    blocker: dict[str, str] | None = None
+    next_steps: list[str] = Field(default_factory=list, max_length=3)
 
 
 def _safe_url(value: str) -> str | None:
@@ -27,9 +74,40 @@ def _safe_url(value: str) -> str | None:
     return candidate
 
 
+def _structured_recommendation(text: str) -> dict[str, Any] | None:
+    """Validate the small JSON envelope used by the recommendation UI."""
+    candidate = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.I | re.S)
+    if fenced:
+        candidate = fenced.group(1)
+    try:
+        payload = json.loads(candidate)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("primary"), dict):
+        return None
+    try:
+        contract = RecommendationContract.model_validate(payload)
+    except ValidationError:
+        return None
+
+    result = contract.model_dump()
+    options = [result["primary"], *result["alternatives"]]
+    for option in options:
+        option["restaurant_url"] = _safe_url(option.get("restaurant_url") or "")
+        evidence = option["availability"]
+        evidence["source_url"] = _safe_url(evidence.get("source_url") or "")
+        reservation = option["reservation"]
+        reservation["url"] = _safe_url(reservation.get("url") or "")
+        if reservation["url"] is None:
+            reservation["status"] = "unavailable"
+    return result
+
+
 def parse_recommendation_answer(answer: str) -> dict[str, Any]:
     """Return deterministic links and safe UI actions extracted from prose."""
     text = answer if isinstance(answer, str) else str(answer or "")
+    recommendation = _structured_recommendation(text)
     links: list[dict[str, str]] = []
     seen: set[str] = set()
 
@@ -48,6 +126,14 @@ def parse_recommendation_answer(answer: str) -> dict[str, Any]:
             kind = "source"
         links.append({"label": label[:120], "url": url, "kind": kind})
 
+    if recommendation:
+        options = [recommendation["primary"], *recommendation["alternatives"]]
+        for option in options:
+            if option.get("restaurant_url"):
+                add(option["name"], option["restaurant_url"], "restaurant website")
+            if option["reservation"].get("url"):
+                add(option["reservation"].get("label") or f"Get {option['name']} reservation", option["reservation"]["url"], "booking reservation")
+
     for match in _MARKDOWN_LINK.finditer(text):
         start, end = match.span()
         add(match.group(1), match.group(2), text[max(0, start - 160):min(len(text), end + 160)])
@@ -60,13 +146,26 @@ def parse_recommendation_answer(answer: str) -> dict[str, Any]:
         add("Booking link" if _BOOKING_WORDS.search(line) else "Open source", match.group(), line)
 
     actions: list[dict[str, str]] = []
-    confirmation = next((item for item in links if item["kind"] == "confirmation"), None)
-    if confirmation:
-        actions.append({"id": "confirm_reservation", "label": "Review and confirm reservation", "kind": "confirmation", "url": confirmation["url"]})
+    if recommendation:
+        for index, option in enumerate([recommendation["primary"], *recommendation["alternatives"]]):
+            if option["reservation"].get("url"):
+                actions.append({
+                    "id": "get_primary_reservation" if index == 0 else f"get_alternative_reservation_{index}",
+                    "label": option["reservation"].get("label") or f"Get {option['name']} reservation",
+                    "kind": "handoff",
+                    "url": option["reservation"]["url"],
+                })
+    if not recommendation:
+        confirmation = next((item for item in links if item["kind"] == "confirmation"), None)
+        if confirmation:
+            actions.append({"id": "confirm_reservation", "label": "Review and confirm reservation", "kind": "confirmation", "url": confirmation["url"]})
 
-    handoffs = [item for item in links if item["kind"] == "handoff"]
-    for index, link in enumerate(handoffs):
-        actions.append({"id": f"booking_handoff_{index + 1}", "label": link["label"], "kind": "handoff", "url": link["url"]})
+        # Legacy prose has no reliable primary/alternative structure. Keep
+        # the first booking URL as the single prominent action; all URLs in
+        # the draft remain clickable in the rendered answer.
+        handoffs = [item for item in links if item["kind"] == "handoff"][:1]
+        for index, link in enumerate(handoffs):
+            actions.append({"id": f"booking_handoff_{index + 1}", "label": link["label"], "kind": "handoff", "url": link["url"]})
 
     # These are UI intents, not claims that an operation has happened.  The
     # organizer can use them to start the next request in the chat/agent UI.
@@ -74,4 +173,7 @@ def parse_recommendation_answer(answer: str) -> dict[str, Any]:
         {"id": "show_alternatives", "label": "Show other options", "kind": "follow_up"},
         {"id": "adjust_preferences", "label": "Adjust group preferences", "kind": "follow_up"},
     ])
-    return {"links": links, "actions": actions}
+    result = {"links": links, "actions": actions}
+    if recommendation:
+        result["recommendation"] = recommendation
+    return result

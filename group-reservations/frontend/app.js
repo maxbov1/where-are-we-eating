@@ -162,14 +162,51 @@ async function showEventOverview(event, aggregate) {
   $('overview-title').textContent = event.name; $('overview-location').textContent = event.location; renderOverview(aggregate); $('event-overview').scrollIntoView({ behavior:'smooth', block:'start' });
 }
 function renderRecommendationResult(result) {
-  renderAgentActions(result.response?.actions || result.actions || []);
+  const actions = result.response?.actions || result.actions || [];
   const fallbackText = result.error_code === 'RECOMMENDATION_TIMEOUT'
     ? 'Live research took longer than the demo window. Showing the seeded recommendation.'
     : result.error_code === 'CONTEXT_WINDOW_OVERFLOW'
       ? 'Live research was stopped because the browser evidence was too large. Showing the seeded recommendation.'
       : 'Live research was unavailable. Showing the seeded recommendation.';
   const fallbackNote = result.fallback ? `<p class="response-summary">${fallbackText}</p>` : '';
+  if (result.response?.recommendation) {
+    renderStructuredRecommendation(result.response.recommendation, fallbackNote);
+    renderAgentActions(actions.filter((action) => !action.url));
+    return;
+  }
+  renderAgentActions(actions);
   $('recommendations').innerHTML = `${fallbackNote}<article class="agent-answer"><div class="card-kicker">/ agent response</div><div>${formatAgentAnswer(result.answer || '')}</div></article>`;
+}
+
+function renderRestaurantLink(option) {
+  const name = escapeHtml(option.name || 'Restaurant');
+  return option.restaurant_url
+    ? `<a class="recommendation-name" href="${escapeHtml(option.restaurant_url)}" target="_blank" rel="noreferrer">${name} <span aria-hidden="true">↗</span></a>`
+    : `<span class="recommendation-name">${name}</span>`;
+}
+
+function renderRestaurantAction(option, index) {
+  if (!option.booking_url) return '<span class="recommendation-unavailable">Reservation path not verified</span>';
+  const label = option.booking_label || `Get ${option.name}'s reservation`;
+  return `<a class="button ${index === 0 ? 'primary' : 'secondary'}" href="${escapeHtml(option.booking_url)}" target="_blank" rel="noreferrer">${escapeHtml(label)} <span aria-hidden="true">↗</span></a>`;
+}
+
+function renderStructuredRecommendation(recommendation, fallbackNote = '') {
+  const primary = recommendation.primary;
+  const alternatives = (recommendation.alternatives || []).slice(0, 2);
+  const optionCard = (option, index, primaryCard = false) => `<article class="recommendation-card ${primaryCard ? 'recommendation-primary' : ''}">
+    <div class="card-kicker">${primaryCard ? 'Best fit for the group' : 'Another good option'}</div>
+    <h3>${renderRestaurantLink(option)}</h3>
+    <p class="recommendation-description">${escapeHtml(option.description || '')}</p>
+    ${option.tradeoff ? `<p class="recommendation-tradeoff">${escapeHtml(option.tradeoff)}</p>` : ''}
+    ${option.availability ? `<p class="recommendation-availability"><strong>Availability:</strong> ${escapeHtml(option.availability)}</p>` : ''}
+    <div class="recommendation-card-action">${renderRestaurantAction(option, index)}</div>
+  </article>`;
+  $('recommendations').innerHTML = `${fallbackNote}<div class="recommendation-set">
+    <p class="recommendation-fit">${escapeHtml(recommendation.group_fit || '')}</p>
+    ${optionCard(primary, 0, true)}
+    ${alternatives.map((option, index) => optionCard(option, index + 1)).join('')}
+  </div>`;
 }
 function openRecommendationPage() {
   if (!state.event) return;

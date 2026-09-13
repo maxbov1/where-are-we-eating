@@ -1,4 +1,4 @@
-"""Local Strands restaurant evidence and reservation-handoff agent."""
+"""Strands restaurant evidence and reservation-handoff agent hosted by AgentCore."""
 
 from __future__ import annotations
 
@@ -223,7 +223,7 @@ def configuration_status() -> dict[str, str | bool]:
 
 def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | None = None,
         progress_callback=None) -> str:
-    """Run one organizer prompt with local browser reservation handoffs."""
+    """Run one organizer prompt with browser-backed reservation handoffs."""
     logger.info("agent stage=run_start user_id=%s prompt_chars=%d", user_id, len(prompt))
     estimated_prompt_tokens = (len(SYSTEM_PROMPT) + len(prompt) + 3) // 4
     logger.info(
@@ -313,11 +313,22 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
                 json.dumps(missing, default=str), json.dumps(state.blockers[-5:], default=str),
             )
             state.blockers.append(blocker)
-            result = (
-                f"TERMINAL STATE: blocked\n\n{blocker}\n\n"
-                "The model draft below is not an authoritative success report.\n\n"
-                f"MODEL DRAFT:\n{result}"
-            )
+            # Keep the model's recommendation intact. The HTTP boundary can
+            # mark a structured response as blocked without turning useful
+            # restaurant options into an unparseable prose wrapper.
+            try:
+                structured_result = json.loads(result)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                structured_result = None
+            if isinstance(structured_result, dict):
+                structured_result["status"] = "blocked"
+                structured_result["blocker"] = {
+                    "code": "RESERVATION_HANDOFFS_INCOMPLETE",
+                    "title": "Reservation verification is unavailable",
+                    "explanation": blocker,
+                    "next_step": "Open a restaurant link to confirm availability directly.",
+                }
+                result = json.dumps(structured_result, ensure_ascii=False)
         logger.info(
             "agent stage=handoff_gate_complete resolved=%d required=%d blocked=%s",
             len(resolved_handoffs), required_handoffs,
