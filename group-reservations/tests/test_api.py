@@ -21,7 +21,7 @@ def test_recommendation_starts_background_run_with_cors_headers(monkeypatch):
         lambda identifier: {"id": identifier, "organizer_id": "local-organizer"},
     )
     monkeypatch.setattr(api, "aggregate_survey", lambda identifier: aggregate)
-    monkeypatch.setattr(api, "run", lambda *args, **kwargs: "demo answer")
+    monkeypatch.setattr(api, "invoke_agentcore", lambda *args, **kwargs: "demo answer")
 
     client = TestClient(api.app, raise_server_exceptions=False)
     response = client.post(
