@@ -75,7 +75,11 @@ organizer and should use encrypted per-user session storage in production.
   workflow state, structured recovery errors, and permitted next actions
   without exposing model chain-of-thought.
 - `api.py`: FastAPI HTTP boundary accepting structured survey responses and
-  invoking the deployed AgentCore runtime through `agentcore_client.py`.
+  invoking the deployed AgentCore runtime through `agentcore_client.py`. It
+  owns the short-lived recommendation run handle and internal continuation
+  context; status responses expose only the validated recommendation envelope,
+  never the raw agent answer, prompt, or internal state. Allowlisted follow-up
+  actions resume the same `run_id` and AgentCore session.
 - `agentcore_client.py`: AWS SDK data-plane client for `InvokeAgentRuntime`.
   The ECS API does not run a second local agent; production requires
   `AGENTCORE_RUNTIME_ARN`.
@@ -123,7 +127,8 @@ frontend survey payload
     -> preference counts and cleaned response context
     -> POST /api/surveys/{survey_id}/recommendations
     -> structured request validation
-    -> agent prompt
+    -> queued recommendation run (`run_id`)
+    -> agent prompt + AgentCore session
     -> survey_get_evidence fallback when context is missing or ambiguous
     -> google_places_search
     -> Google Places searchText
@@ -135,6 +140,11 @@ frontend survey payload
     -> explicit organizer confirmation
     -> explicit organizer confirmation + external booking handoff
 ```
+
+The frontend polls `GET /api/recommendations/{run_id}` until the run reaches a
+terminal state. A contract action such as `refresh_research` is sent to
+`POST /api/recommendations/{run_id}/actions`; the API reuses the run's
+AgentCore session and includes the last validated contract as bounded context.
 
 Agent observability is provided by lifecycle hooks. Trace records capture the
 phase, tool, sanitized input, result summary, evidence/source references,

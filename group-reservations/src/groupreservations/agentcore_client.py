@@ -13,7 +13,7 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 
-def invoke_agentcore(prompt: str, *, user_id: str) -> str:
+def invoke_agentcore(prompt: str, *, user_id: str, session_id: str | None = None) -> str:
     """Invoke the configured AgentCore runtime and return its agent text."""
     runtime_arn = settings.agentcore_runtime_arn.strip()
     if not runtime_arn:
@@ -22,7 +22,7 @@ def invoke_agentcore(prompt: str, *, user_id: str) -> str:
         )
 
     client = boto3.client("bedrock-agentcore", region_name=settings.agentcore_region)
-    session_id = f"wawe-{uuid.uuid4()}"
+    session_id = session_id or f"wawe-{uuid.uuid4()}"
     payload = json.dumps({"prompt": prompt, "user_id": user_id}).encode("utf-8")
     logger.info("agentcore invoke runtime_arn=%s session_id=%s prompt_chars=%d", runtime_arn, session_id, len(prompt))
     response = client.invoke_agent_runtime(

@@ -53,6 +53,15 @@ class RestaurantRecommendation(BaseModel):
     reservation: ReservationHandoff = Field(default_factory=ReservationHandoff)
 
 
+class SuggestedAction(BaseModel):
+    """Allowlisted, non-destructive action suggested by the agent."""
+
+    model_config = ConfigDict(extra="ignore")
+    id: Literal["show_alternatives", "adjust_preferences", "refresh_research"]
+    label: str = Field(min_length=1, max_length=120)
+    kind: Literal["follow_up"] = "follow_up"
+
+
 class RecommendationContract(BaseModel):
     """The model-to-UI contract for one recommendation result."""
 
@@ -63,11 +72,12 @@ class RecommendationContract(BaseModel):
     alternatives: list[RestaurantRecommendation] = Field(default_factory=list, max_length=2)
     blocker: dict[str, str] | None = None
     next_steps: list[str] = Field(default_factory=list, max_length=3)
+    actions: list[SuggestedAction] = Field(default_factory=list, max_length=3)
 
 
 def _safe_url(value: str) -> str | None:
     """Accept only absolute HTTP(S) URLs for rendered external actions."""
-    candidate = value.rstrip(".,;:")
+    candidate = value.strip().rstrip(".,;:↗").rstrip()
     parts = urlsplit(candidate)
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         return None
@@ -77,15 +87,37 @@ def _safe_url(value: str) -> str | None:
 def _structured_recommendation(text: str) -> dict[str, Any] | None:
     """Validate the small JSON envelope used by the recommendation UI."""
     candidate = text.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.I | re.S)
-    if fenced:
-        candidate = fenced.group(1)
-    try:
-        payload = json.loads(candidate)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", candidate, re.I | re.S)
+    candidates = [fenced.group(1)] if fenced else []
+    candidates.append(candidate)
+    if not fenced:
+        start, end = candidate.find("{"), candidate.rfind("}")
+        if start >= 0 and end > start:
+            candidates.insert(0, candidate[start:end + 1])
+    payload = None
+    for candidate_json in candidates:
+        try:
+            decoded = json.loads(candidate_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(decoded, dict) and isinstance(decoded.get("primary"), dict):
+            payload = decoded
+            break
     if not isinstance(payload, dict) or not isinstance(payload.get("primary"), dict):
         return None
+    # Accept the previous draft shape during the rollout.  The public result
+    # is still emitted only in the new nested contract shape.
+    for option in [payload["primary"], *payload.get("alternatives", [])]:
+        if not isinstance(option, dict):
+            continue
+        if isinstance(option.get("availability"), str):
+            option["availability"] = {"summary": option["availability"]}
+        if "reservation" not in option and (option.get("booking_url") or option.get("booking_label")):
+            option["reservation"] = {
+                "url": option.get("booking_url"),
+                "label": option.get("booking_label") or f"Get {option.get('name', 'restaurant')}'s reservation",
+                "status": "unknown",
+            }
     try:
         contract = RecommendationContract.model_validate(payload)
     except ValidationError:
@@ -155,6 +187,7 @@ def parse_recommendation_answer(answer: str) -> dict[str, Any]:
                     "kind": "handoff",
                     "url": option["reservation"]["url"],
                 })
+        actions.extend(recommendation.get("actions", []))
     if not recommendation:
         confirmation = next((item for item in links if item["kind"] == "confirmation"), None)
         if confirmation:
@@ -169,10 +202,14 @@ def parse_recommendation_answer(answer: str) -> dict[str, Any]:
 
     # These are UI intents, not claims that an operation has happened.  The
     # organizer can use them to start the next request in the chat/agent UI.
-    actions.extend([
-        {"id": "show_alternatives", "label": "Show other options", "kind": "follow_up"},
-        {"id": "adjust_preferences", "label": "Adjust group preferences", "kind": "follow_up"},
-    ])
+    if not recommendation or recommendation.get("status") != "blocked":
+        existing_ids = {action["id"] for action in actions}
+        actions.extend([
+            action for action in [
+                {"id": "show_alternatives", "label": "Show other options", "kind": "follow_up"},
+                {"id": "adjust_preferences", "label": "Adjust group preferences", "kind": "follow_up"},
+            ] if action["id"] not in existing_ids
+        ])
     result = {"links": links, "actions": actions}
     if recommendation:
         result["recommendation"] = recommendation

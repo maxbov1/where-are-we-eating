@@ -57,3 +57,27 @@ def test_parser_returns_structured_recommendation_and_reservation_actions():
     assert [action["id"] for action in result["actions"][:2]] == [
         "get_primary_reservation", "get_alternative_reservation_1"
     ]
+
+
+def test_parser_extracts_fenced_contract_without_exposing_model_prose():
+    result = parse_recommendation_answer(
+        "The browser was blocked. Here is the result:\n\n```json\n"
+        + json.dumps({
+            "status": "blocked",
+            "group_fit": "The group prefers casual Mexican food.",
+            "primary": {
+                "name": "Sol Agave",
+                "description": "A casual Mexican restaurant.",
+                "restaurant_url": "https://example.com/sol ↗",
+                "availability": {"status": "unknown", "summary": "Not verified."},
+                "reservation": {"status": "unknown", "url": None},
+            },
+            "alternatives": [],
+            "blocker": {"title": "I can't complete further than this"},
+        })
+        + "\n```\n\nTERMINAL STATE: blocked"
+    )
+
+    assert result["recommendation"]["status"] == "blocked"
+    assert result["recommendation"]["primary"]["restaurant_url"] == "https://example.com/sol"
+    assert result["recommendation"]["blocker"]["title"] == "I can't complete further than this"

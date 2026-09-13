@@ -36,3 +36,21 @@ def test_recommendation_starts_background_run_with_cors_headers(monkeypatch):
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
     assert response.json()["status"] == "queued"
     assert response.json()["run_id"].startswith("recommendation-")
+
+
+def test_public_recommendation_run_excludes_raw_agent_answer_and_internal_context():
+    public = api._public_recommendation_run({
+        "run_id": "recommendation-test",
+        "status": "complete",
+        "response": {"recommendation": {"primary": {"name": "Pronto"}}},
+        "answer": "private model trace and prompt",
+        "organizer_id": "private-organizer",
+        "_prompt": "private research prompt",
+        "_state": object(),
+    })
+
+    assert public["run_id"] == "recommendation-test"
+    assert "answer" not in public
+    assert "organizer_id" not in public
+    assert "_prompt" not in public
+    assert "_state" not in public

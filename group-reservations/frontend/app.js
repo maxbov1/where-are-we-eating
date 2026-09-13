@@ -1,4 +1,4 @@
-const state = { event: null, responses: [], organizerId: localStorage.getItem('organizerId'), guestOrigin: null, aggregate: null };
+const state = { event: null, responses: [], organizerId: localStorage.getItem('organizerId'), guestOrigin: null, aggregate: null, recommendationRunId: null };
 const $ = (id) => document.getElementById(id);
 const screens = { signup: $('signup-screen'), organizer: $('organizer-screen'), survey: $('survey-screen') };
 const API_BASE = window.WAE_API_BASE || 'http://127.0.0.1:8000';
@@ -9,9 +9,9 @@ function prettyDate(value) { return new Intl.DateTimeFormat('en-US', { weekday: 
 function prettyTime(value) { const [hours, minutes] = value.split(':'); return new Intl.DateTimeFormat('en-US', { hour:'numeric', minute:'2-digit' }).format(new Date(2000, 0, 1, Number(hours), Number(minutes))); }
 function prettyDateTime(value) { return new Intl.DateTimeFormat('en-US', { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(new Date(value)); }
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
-function recommendationCacheKey(event, responseCount) { return `recommendation:${event?.surveyId || 'unknown'}:${responseCount || 0}`; }
-function readRecommendationCache(event, responseCount) { try { const cached = JSON.parse(localStorage.getItem(recommendationCacheKey(event, responseCount)) || 'null'); return cached?.answer ? cached : null; } catch (error) { return null; } }
-function writeRecommendationCache(event, responseCount, result) { try { localStorage.setItem(recommendationCacheKey(event, responseCount), JSON.stringify({ answer:result.answer || '', actions:result.response?.actions || [], fallback:Boolean(result.fallback) })); } catch (error) { /* Optional optimization. */ } }
+function recommendationCacheKey(event, responseCount) { return `recommendation:v3:${event?.surveyId || 'unknown'}:${responseCount || 0}`; }
+function readRecommendationCache(event, responseCount) { try { const cached = JSON.parse(localStorage.getItem(recommendationCacheKey(event, responseCount)) || 'null'); return cached?.recommendation ? cached : null; } catch (error) { return null; } }
+function writeRecommendationCache(event, responseCount, result) { try { localStorage.setItem(recommendationCacheKey(event, responseCount), JSON.stringify({ run_id:result.run_id || state.recommendationRunId || null, recommendation:result.response?.recommendation || null, actions:result.response?.actions || [], conversation:result.conversation || [], active_action:result.active_action || null, fallback:Boolean(result.fallback), error_code:result.error_code || null })); } catch (error) { /* Optional optimization. */ } }
 function setupLocationPicker(inputId, menuId, { citiesOnly = false, locationContext = () => null, onSelect = () => {} } = {}) {
   const input = $(inputId); const menu = $(menuId); let sessionToken = crypto.randomUUID(); let timer;
   input.addEventListener('input', () => {
@@ -142,19 +142,27 @@ function renderOverview(aggregate) {
   const schedule = report.schedule || {};
   const preferences = report.preferences || {};
   const pairs = (schedule.recommended_pairs || []).slice(0, 3);
-  const stats = [
-    [`${aggregate.response_count || 0}`, 'responses'],
-    [schedule.pair_consensus === 'tie' ? 'Tied' : 'Clear', 'schedule signal'],
-    [report.confidence?.overall?.label || 'Building', 'group confidence'],
-  ];
-  $('overview-stats').innerHTML = stats.map(([value, label]) => `<div class="overview-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join('');
-  const scheduleMarkup = pairs.length ? `<section class="overview-block"><h3>When the group can meet</h3><div class="pair-list">${pairs.map((pair, index) => `<div class="pair-row"><span>${index === 0 ? 'Leading option' : 'Alternative'} · ${prettyDate(pair.date)} at ${prettyTime(pair.time)}</span><b>${pair.votes} vote${pair.votes === 1 ? '' : 's'}</b></div>`).join('')}</div></section>` : '';
-  const preferenceBlocks = Object.entries(preferences).filter(([, item]) => item?.leaders?.length).slice(0, 4).map(([key, item]) => { const leaders = item.leaders.slice(0, 3); const max = Math.max(...leaders.map((leader) => leader.votes), 1); return `<section class="overview-block"><h3>${escapeHtml(QUESTION_LABELS[key] || key)}</h3><div class="preference-list">${leaders.map((leader) => `<div class="preference-row"><div class="preference-label"><span>${escapeHtml(leader.value)}</span><b>${leader.votes}</b></div><div class="preference-bar"><i data-bar-width="${Math.round((leader.votes / max) * 100)}"></i></div></div>`).join('')}</div></section>`; }).join('');
+  const responseCount = aggregate.response_count || 0;
+  const scheduleMax = Math.max(...pairs.map((pair) => Number(pair.votes) || 0), 1);
+  const scheduleMarkup = pairs.length ? `<section class="overview-block overview-numeric"><div class="visual-heading"><div><h3>When the group can meet</h3><p>More filled area means more people chose that window.</p></div><span class="visual-type">Numeric signal</span></div><div class="schedule-visual">${pairs.map((pair, index) => `<div class="schedule-visual-row"><div class="visual-label"><span>${index === 0 ? 'Leading option' : 'Alternative'} · ${prettyDate(pair.date)} at ${prettyTime(pair.time)}</span><b>${pair.votes} vote${pair.votes === 1 ? '' : 's'}</b></div><div class="visual-track"><i data-bar-width="${Math.round(((Number(pair.votes) || 0) / scheduleMax) * 100)}"></i></div></div>`).join('')}</div></section>` : '';
+  const numericPreferenceBlocks = Object.entries(preferences).filter(([key, item]) => key === 'distance' && item?.leaders?.length).map(([key, item]) => { const leaders = item.leaders.slice(0, 5); const max = Math.max(...leaders.map((leader) => leader.votes), 1); return `<section class="overview-block overview-numeric"><div class="visual-heading"><div><h3>${escapeHtml(QUESTION_LABELS[key] || key)}</h3><p>How far people are willing to travel.</p></div><span class="visual-type">Numeric signal</span></div><div class="schedule-visual">${leaders.map((leader) => `<div class="schedule-visual-row"><div class="visual-label"><span>Up to ${escapeHtml(leader.value)} miles</span><b>${leader.votes}</b></div><div class="visual-track"><i data-bar-width="${Math.round((leader.votes / max) * 100)}"></i></div></div>`).join('')}</div></section>`; }).join('');
+  const categoryBlocks = Object.entries(preferences).filter(([key, item]) => key !== 'distance' && item?.leaders?.length).slice(0, 4).map(([key, item]) => {
+    const leaders = item.leaders.slice(0, 4);
+    const total = Math.max(Object.values(item.votes || {}).reduce((sum, value) => sum + (Number(value) || 0), 0), leaders.reduce((sum, leader) => sum + (Number(leader.votes) || 0), 0), 1);
+    const circumference = 238.76;
+    let offset = 0;
+    const colors = ['#405238', '#a84730', '#e6a93d', '#543d51'];
+    const segments = leaders.map((leader, index) => { const length = circumference * ((Number(leader.votes) || 0) / total); const segment = `<circle class="preference-donut-segment" cx="50" cy="50" r="38" stroke="${colors[index % colors.length]}" data-donut-length="${length}" data-donut-offset="${-offset}" style="stroke-dasharray:0 ${circumference};stroke-dashoffset:${-offset}" />`; offset += length; return segment; }).join('');
+    return `<section class="overview-block overview-category"><div class="visual-heading"><div><h3>${escapeHtml(QUESTION_LABELS[key] || key)}</h3><p>Where the group’s preferences cluster.</p></div><span class="visual-type">Category mix</span></div><div class="category-visual"><div class="donut-wrap"><svg viewBox="0 0 100 100" role="img" aria-label="${escapeHtml(QUESTION_LABELS[key] || key)} preference breakdown"><circle class="preference-donut-base" cx="50" cy="50" r="38" /><g>${segments}</g></svg><strong>${total}</strong><span>votes</span></div><div class="category-legend">${leaders.map((leader, index) => `<div class="legend-row"><i style="background:${colors[index % colors.length]}"></i><span>${escapeHtml(leader.value)}</span><b>${leader.votes}</b></div>`).join('')}</div></div></section>`;
+  }).join('');
   const dietary = (report.constraints?.dietary_requirements || []).join(', ');
   const dietaryMarkup = dietary ? `<p class="overview-constraint"><strong>Dietary notes:</strong> ${escapeHtml(dietary)}</p>` : '';
-  $('overview-grid').innerHTML = scheduleMarkup + preferenceBlocks + dietaryMarkup;
+  $('overview-grid').innerHTML = `<p class="overview-intro">${responseCount ? `${responseCount} person${responseCount === 1 ? '' : 's'} weighed in. Here’s where the group’s choices are converging.` : 'Waiting for the first response.'}</p>${scheduleMarkup}${numericPreferenceBlocks}${categoryBlocks}${dietaryMarkup}`;
   const animateBars = () => document.querySelectorAll('#overview-grid [data-bar-width]').forEach((bar) => { const width = `${bar.dataset.barWidth}%`; if (window.motionAnimate) window.motionAnimate(bar, { width: ['0%', width] }, { duration:.55, delay:.08 }); else { bar.style.width = width; } });
   requestAnimationFrame(animateBars);
+  const circumference = 238.76;
+  const animateDonuts = () => document.querySelectorAll('#overview-grid [data-donut-length]').forEach((segment, index) => { const length = Number(segment.dataset.donutLength); const offset = Number(segment.dataset.donutOffset); if (window.motionAnimate) window.motionAnimate(segment, { strokeDasharray: [`0 ${circumference}`, `${length} ${circumference - length}`], strokeDashoffset: [offset, offset] }, { duration:.8, delay:index * .08 }); else { segment.style.strokeDasharray = `${length} ${circumference - length}`; } });
+  requestAnimationFrame(animateDonuts);
 }
 async function showEventOverview(event, aggregate) {
   state.event = event;
@@ -164,6 +172,8 @@ async function showEventOverview(event, aggregate) {
   $('overview-title').textContent = event.name; $('overview-location').textContent = event.location; renderOverview(aggregate); $('event-overview').scrollIntoView({ behavior:'smooth', block:'start' });
 }
 function renderRecommendationResult(result) {
+  if (result.run_id) state.recommendationRunId = result.run_id;
+  state.recommendationConversation = result.conversation || [];
   const actions = result.response?.actions || result.actions || [];
   const fallbackText = result.error_code === 'RECOMMENDATION_TIMEOUT'
     ? 'Live research took longer than the demo window. Showing the seeded recommendation.'
@@ -173,11 +183,11 @@ function renderRecommendationResult(result) {
   const fallbackNote = result.fallback ? `<p class="response-summary">${fallbackText}</p>` : '';
   if (result.response?.recommendation) {
     renderStructuredRecommendation(result.response.recommendation, fallbackNote);
-    renderAgentActions(actions.filter((action) => !action.url));
+    renderAgentActions(actions.filter((action) => !action.url), state.recommendationRunId);
     return;
   }
-  renderAgentActions(actions);
-  $('recommendations').innerHTML = `${fallbackNote}<article class="agent-answer"><div class="card-kicker">/ agent response</div><div>${formatAgentAnswer(result.answer || '')}</div></article>`;
+  renderAgentActions(actions, state.recommendationRunId);
+  $('recommendations').innerHTML = `${fallbackNote}<article class="agent-answer"><div class="card-kicker">Recommendation unavailable</div><div>We couldn’t receive a complete structured recommendation. Please refresh and try again.</div></article>`;
 }
 
 function renderRestaurantLink(option) {
@@ -188,9 +198,10 @@ function renderRestaurantLink(option) {
 }
 
 function renderRestaurantAction(option, index) {
-  if (!option.booking_url) return '<span class="recommendation-unavailable">Reservation path not verified</span>';
-  const label = option.booking_label || `Get ${option.name}'s reservation`;
-  return `<a class="button ${index === 0 ? 'primary' : 'secondary'}" href="${escapeHtml(option.booking_url)}" target="_blank" rel="noreferrer">${escapeHtml(label)} <span aria-hidden="true">↗</span></a>`;
+  const reservation = option.reservation || {};
+  if (!reservation.url) return '<span class="recommendation-unavailable">Reservation path not verified</span>';
+  const label = reservation.label || `Open ${option.name} reservation options`;
+  return `<a class="button ${index === 0 ? 'primary' : 'secondary'}" href="${escapeHtml(reservation.url)}" target="_blank" rel="noreferrer">${escapeHtml(label)} <span aria-hidden="true">↗</span></a>`;
 }
 
 function renderStructuredRecommendation(recommendation, fallbackNote = '') {
@@ -200,14 +211,19 @@ function renderStructuredRecommendation(recommendation, fallbackNote = '') {
     <div class="card-kicker">${primaryCard ? 'Best fit for the group' : 'Another good option'}</div>
     <h3>${renderRestaurantLink(option)}</h3>
     <p class="recommendation-description">${escapeHtml(option.description || '')}</p>
+    ${option.traits?.length ? `<div class="recommendation-traits">${option.traits.map((trait) => `<span>${escapeHtml(trait)}</span>`).join('')}</div>` : ''}
     ${option.tradeoff ? `<p class="recommendation-tradeoff">${escapeHtml(option.tradeoff)}</p>` : ''}
-    ${option.availability ? `<p class="recommendation-availability"><strong>Availability:</strong> ${escapeHtml(option.availability)}</p>` : ''}
+    ${option.availability ? `<p class="recommendation-availability"><strong>${escapeHtml(option.availability.status === 'verified' ? 'Availability verified' : 'Availability not verified')}:</strong> ${escapeHtml(option.availability.summary || 'Unknown')}</p>` : ''}
     <div class="recommendation-card-action">${renderRestaurantAction(option, index)}</div>
   </article>`;
+  const blocker = recommendation.status === 'blocked' && recommendation.blocker ? `<aside class="recommendation-blocker"><strong>${escapeHtml(recommendation.blocker.title || "I can't complete further than this")}</strong><p>${escapeHtml(recommendation.blocker.explanation || 'The next research step could not be verified.')}</p><p>${escapeHtml(recommendation.blocker.next_step || "I can't complete further than this.")}</p></aside>` : '';
+  const conversation = (state.recommendationConversation || []).map((message) => `<div class="agent-message agent-message-${escapeHtml(message.role || 'assistant')}" data-message-kind="${escapeHtml(message.kind || 'status')}"><span>${escapeHtml(message.role === 'user' ? 'You' : 'Where Are We Eating?')}</span><p>${escapeHtml(message.content || '')}</p></div>`).join('');
   $('recommendations').innerHTML = `${fallbackNote}<div class="recommendation-set">
+    ${conversation ? `<div class="agent-conversation" aria-label="Recommendation conversation">${conversation}</div>` : ''}
     <p class="recommendation-fit">${escapeHtml(recommendation.group_fit || '')}</p>
     ${optionCard(primary, 0, true)}
     ${alternatives.map((option, index) => optionCard(option, index + 1)).join('')}
+    ${blocker}
   </div>`;
 }
 function openRecommendationPage() {
@@ -331,24 +347,52 @@ $('run-agent').addEventListener('click', async () => {
   }
 });
 
-function formatAgentAnswer(value) {
-  const escaped = value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-  const linkedMarkdown = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1 ↗</a>');
-  const linkedPlain = linkedMarkdown.replace(/(?<!["=])(https?:\/\/[^\s<&]+)/g, '<a href="$1" target="_blank" rel="noreferrer">$1 ↗</a>');
-  return linkedPlain.replaceAll('\n', '<br />');
+async function resumeRecommendationAction(runId, actionId, button) {
+  if (!runId) return;
+  button.disabled = true;
+  button.textContent = 'Continuing…';
+  try {
+    const response = await fetch(`${API_BASE}/api/recommendations/${encodeURIComponent(runId)}/actions`, { method:'POST', headers:{'Content-Type':'application/json','X-Organizer-Id':state.organizerId || 'local-organizer'}, body:JSON.stringify({ action_id:actionId }) });
+    const queued = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(queued.detail || 'Could not continue the recommendation');
+    const poll = async () => {
+      const statusResponse = await fetch(`${API_BASE}/api/recommendations/${encodeURIComponent(runId)}`, { headers:{'X-Organizer-Id':state.organizerId || 'local-organizer'} });
+      const status = await statusResponse.json().catch(() => ({}));
+      if (!statusResponse.ok) throw new Error(status.detail || 'Could not read recommendation progress');
+      if (status.status === 'queued' || status.status === 'running') { await new Promise((resolve) => setTimeout(resolve, 1200)); return poll(); }
+      return status;
+    };
+    const result = await poll();
+    writeRecommendationCache(state.event, state.aggregate?.response_count || state.responses.length || 0, result);
+    renderRecommendationResult(result);
+  } catch (error) {
+    $('recommendations').insertAdjacentHTML('afterbegin', `<p class="error-message">${escapeHtml(error instanceof Error ? error.message : 'The follow-up could not be completed.')}</p>`);
+    button.disabled = false;
+    button.textContent = 'Try again';
+  }
 }
 
-function findBookingUrl(value) {
-  const line = value.split('\n').find((item) => /booking link/i.test(item) && !/unavailable/i.test(item));
-  return line?.match(/https?:\/\/[^\s)]+/)?.[0] || '';
-}
-
-function renderAgentActions(actions) {
+function renderAgentActions(actions, runId = state.recommendationRunId) {
   const external = actions.filter((action) => action.url);
   const followups = actions.filter((action) => !action.url);
   $('booking-handoff').innerHTML = external.map((action) => `<a class="button ${action.kind === 'confirmation' ? 'primary' : 'secondary'}" href="${escapeHtml(action.url)}" target="_blank" rel="noreferrer">${escapeHtml(action.label)} <span>↗</span></a>`).join('') + (followups.length ? `<div class="follow-up-actions">${followups.map((action) => `<button type="button" class="text-button" data-follow-up="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('')}</div>` : '');
   $('booking-handoff').classList.toggle('hidden', !actions.length);
-  $('booking-handoff').querySelectorAll('[data-follow-up]').forEach((button) => button.addEventListener('click', () => { $('recommendations').insertAdjacentHTML('afterbegin', `<p class="response-summary">${escapeHtml(button.textContent)} selected — ask the agent to continue with this request.</p>`); }));
+  $('booking-handoff').querySelectorAll('[data-follow-up]').forEach((button) => button.addEventListener('click', () => {
+    const actionId = button.dataset.followUp;
+    if (actionId === 'show_alternatives') {
+      document.querySelector('.recommendation-card:not(.recommendation-primary)')?.scrollIntoView({ behavior:'smooth', block:'center' });
+      return;
+    }
+    if (actionId === 'adjust_preferences') {
+      $('recommendation-back').click();
+      return;
+    }
+    if (actionId === 'refresh_research') {
+      resumeRecommendationAction(runId, actionId, button);
+      return;
+    }
+    $('recommendations').insertAdjacentHTML('afterbegin', `<p class="response-summary">${escapeHtml(button.textContent)} is not available yet.</p>`);
+  }));
 }
 
 async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, location_lat:survey.location_lat, location_lng:survey.location_lng, dates:survey.dates, times:survey.times, availability:survey.availability, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href, expiresAt:survey.expires_at, isOpen:survey.is_open !== false }; if (survey.is_open === false) { $('survey-title').innerHTML = `Help pick <em>${survey.event_name}.</em>`; show('survey'); $('survey-form').classList.add('hidden'); $('survey-closed').classList.remove('hidden'); return; } prepareSurvey(); show('survey'); }

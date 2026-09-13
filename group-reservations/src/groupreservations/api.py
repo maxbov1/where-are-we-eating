@@ -10,7 +10,7 @@ import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -152,18 +152,57 @@ def _set_recommendation_run(run_id: str, **changes: object) -> dict[str, object]
     return None
 
 
+def _public_recommendation_run(record: dict[str, object]) -> dict[str, object]:
+    """Expose run progress/results without leaking prompts or raw model text."""
+    allowed = {
+        "run_id", "status", "stage", "message", "response", "fallback",
+        "fallback_reason", "error_code", "completed_at", "created_at",
+        "last_progress_at", "watchdog_deadline_seconds", "conversation",
+        "active_action",
+    }
+    return {key: value for key, value in record.items() if key in allowed}
+
+
+def _conversation_message(role: str, kind: str, content: str, **extra: object) -> dict[str, object]:
+    """Create a small UI message without retaining model-generated prose."""
+    return {
+        "id": f"message-{uuid.uuid4().hex[:12]}",
+        "role": role,
+        "kind": kind,
+        "content": content,
+        "created_at": time.time(),
+        **extra,
+    }
+
+
+def _append_conversation(record: dict[str, object], message: dict[str, object]) -> None:
+    messages = record.setdefault("conversation", [])
+    if isinstance(messages, list):
+        messages.append(message)
+        del messages[:-12]
+
+
 def _fallback_result(run_id: str, reason: str) -> None:
-    _set_recommendation_run(
-        run_id,
-        status="fallback",
-        stage="fallback_ready",
-        answer=_DEMO_FALLBACK_ANSWER,
-        response=parse_recommendation_answer(_DEMO_FALLBACK_ANSWER),
-        fallback=True,
-        fallback_reason=reason,
-        error_code="CONTEXT_WINDOW_OVERFLOW" if "context window" in reason.casefold() else "AGENT_RUN_FAILED",
-        completed_at=time.time(),
-    )
+    fallback_response = parse_recommendation_answer(_DEMO_FALLBACK_ANSWER)
+    with _recommendation_runs_lock:
+        record = _recommendation_runs.get(run_id)
+        if not record:
+            return
+        record.update({
+            "status": "fallback",
+            "stage": "fallback_ready",
+            "response": fallback_response,
+            "_last_contract": fallback_response.get("recommendation"),
+            "fallback": True,
+            "fallback_reason": reason,
+            "error_code": "CONTEXT_WINDOW_OVERFLOW" if "context window" in reason.casefold() else "AGENT_RUN_FAILED",
+            "completed_at": time.time(),
+            "active_action": {"id": record.get("_last_action"), "status": "failed"} if record.get("_last_action") else None,
+        })
+        _append_conversation(record, _conversation_message(
+            "assistant", "fallback",
+            "I couldn't complete live verification. The available recommendations and the exact next step are shown below.",
+        ))
 
 
 def _is_context_overflow(error: BaseException) -> bool:
@@ -197,10 +236,17 @@ def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: Agen
             last_tool=_tool,
             last_progress_at=now,
         )
+        with _recommendation_runs_lock:
+            record = _recommendation_runs.get(run_id)
+            if record and record.get("_last_action"):
+                record["active_action"] = {"id": record["_last_action"], "status": "running"}
 
     on_phase("agent_reasoning", "start")
+    with _recommendation_runs_lock:
+        run_record = _recommendation_runs.get(run_id) or {}
+        runtime_session_id = str(run_record.get("_runtime_session_id") or "")
     try:
-        answer = invoke_agentcore(prompt, user_id=organizer_id)
+        answer = invoke_agentcore(prompt, user_id=organizer_id, session_id=runtime_session_id)
     except Exception as exc:
         record = _set_recommendation_run(run_id, last_error_type=type(exc).__name__)
         logger.exception(
@@ -225,15 +271,21 @@ def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: Agen
                 time.time() - float((record or {}).get("created_at", time.time())),
             )
             return
+        response = parse_recommendation_answer(answer)
         record.update({
             "status": "complete",
             "stage": "recommendation_ready",
             "message": "The recommendation and reservation evidence are ready.",
-            "answer": answer,
-            "response": parse_recommendation_answer(answer),
+            "response": response,
+            "_last_contract": response.get("recommendation"),
+            "active_action": {"id": record.get("_last_action"), "status": "complete"} if record.get("_last_action") else None,
             "fallback": False,
             "completed_at": time.time(),
         })
+        _append_conversation(record, _conversation_message(
+            "assistant", "result",
+            "The recommendation is ready. Review the fit, evidence, and available handoffs below.",
+        ))
         logger.info(
             "recommendation background run complete run_id=%s elapsed_seconds=%.1f",
             run_id, time.time() - float(record.get("created_at", time.time())),
@@ -279,6 +331,7 @@ def _expire_recommendation(run_id: str) -> None:
                 time.time() - float(record.get("last_progress_at", record.get("created_at", time.time()))),
                 settings.recommendation_timeout_seconds,
             )
+            fallback_response = parse_recommendation_answer(_DEMO_FALLBACK_ANSWER)
             record.update({
                 "status": "timeout",
                 "stage": "fallback_ready",
@@ -286,9 +339,15 @@ def _expire_recommendation(run_id: str) -> None:
                 "fallback": True,
                 "fallback_reason": "The live recommendation exceeded the local demo timeout.",
                 "error_code": "RECOMMENDATION_TIMEOUT",
-                "answer": _DEMO_FALLBACK_ANSWER,
+                "response": fallback_response,
+                "_last_contract": fallback_response.get("recommendation"),
+                "active_action": {"id": record.get("_last_action"), "status": "failed"} if record.get("_last_action") else None,
                 "completed_at": time.time(),
             })
+            _append_conversation(record, _conversation_message(
+                "assistant", "fallback",
+                "I couldn't complete live verification within the research window. The seeded recommendation is shown below.",
+            ))
     if reschedule_for is not None:
         logger.info(
             "recommendation watchdog extended run_id=%s stage=%s tool=%s elapsed_seconds=%.1f phase_idle_seconds=%.1f deadline_seconds=%.1f next_check_seconds=%.1f",
@@ -326,6 +385,16 @@ def _enqueue_recommendation(prompt: str, organizer_id: str, state: AgentState) -
             "last_tool": None,
             "last_progress_at": now,
             "watchdog_deadline_seconds": settings.recommendation_timeout_seconds,
+            "_prompt": prompt,
+            "_base_prompt": prompt,
+            "_runtime_session_id": f"wawe-{uuid.uuid4()}",
+            "_last_contract": None,
+            "_state": state,
+            "conversation": [_conversation_message(
+                "assistant", "status",
+                "I’m reading the group’s preferences and researching the best options.",
+            )],
+            "active_action": None,
         }
     _recommendation_executor.submit(_run_recommendation, run_id, prompt, organizer_id, state)
     timer = threading.Timer(settings.recommendation_timeout_seconds, _expire_recommendation, args=(run_id,))
@@ -359,6 +428,10 @@ class RecommendationRequest(BaseModel):
     responses: list[GuestResponse] = Field(max_length=500)
     questions: dict[str, list[str]] = Field(default_factory=dict)
     report: dict[str, object] = Field(default_factory=dict)
+
+
+class RecommendationActionRequest(BaseModel):
+    action_id: Literal["refresh_research"]
 
 
 class UserRequest(BaseModel):
@@ -685,7 +758,8 @@ before or after it. Use exactly this shape:
     {{"name":"...", "description":"...", "traits":[], "tradeoff":"...", "availability":{{}}, "restaurant_url":"...", "reservation":{{}}}}
   ],
   "blocker": {{"code":"...","title":"...","explanation":"...","next_step":"..."}} or null,
-  "next_steps": ["one or two safe actions the organizer can take next"]
+  "next_steps": ["one or two safe actions the organizer can take next"],
+  "actions": [{"id":"show_alternatives" or "adjust_preferences" or "refresh_research", "kind":"follow_up", "label":"button label"}]
 }}
 The UI turns the primary and alternatives into linked restaurant cards and turns
 reservation.url values into buttons. Never fabricate a URL. Never claim that a
@@ -765,7 +839,7 @@ def recommendation_status(
     x_organizer_id: Annotated[str | None, Header()] = None,
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, object]:
-    """Return local recommendation progress and the eventual answer."""
+    """Return local progress and the validated public recommendation envelope."""
     organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
     with _recommendation_runs_lock:
         record = _recommendation_runs.get(run_id)
@@ -773,9 +847,60 @@ def recommendation_status(
             raise HTTPException(status_code=404, detail="Recommendation run not found")
         if record.get("organizer_id") != organizer_id:
             raise HTTPException(status_code=404, detail="Recommendation run not found")
-        result = dict(record)
-    result.pop("organizer_id", None)
-    return result
+    return _public_recommendation_run(record)
+
+
+@app.post("/api/recommendations/{run_id}/actions")
+def recommendation_action(
+    run_id: str,
+    payload: RecommendationActionRequest,
+    x_organizer_id: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Resume one owned recommendation run through an allowlisted action."""
+    organizer_id = _resolve_organizer_id(authorization, x_organizer_id)
+    with _recommendation_runs_lock:
+        record = _recommendation_runs.get(run_id)
+        if not record or record.get("organizer_id") != organizer_id:
+            raise HTTPException(status_code=404, detail="Recommendation run not found")
+        if record.get("status") in {"queued", "running"}:
+            return _public_recommendation_run(record)
+        prompt = str(record.get("_base_prompt") or record.get("_prompt") or "")
+        state = record.get("_state")
+        if not prompt or not isinstance(state, AgentState):
+            raise HTTPException(status_code=409, detail="Recommendation context is no longer available")
+        previous_contract = record.get("_last_contract")
+        prior_context = json.dumps(previous_contract, ensure_ascii=False) if previous_contract else "none"
+        prompt = (
+            f"{prompt}\n\nThe organizer selected the follow-up action "
+            f"{payload.action_id}. Continue from the existing research context; "
+            "do not discard verified evidence or claim that a reservation was made.\n"
+            f"Previous validated recommendation context: {prior_context}"
+        )
+        record.update({
+            "status": "queued",
+            "stage": "queued",
+            "message": "Resuming the recommendation from the existing research context.",
+            "fallback": False,
+            "fallback_reason": None,
+            "error_code": None,
+            "response": None,
+            "_last_action": payload.action_id,
+            "active_action": {"id": payload.action_id, "status": "queued"},
+            "last_progress_at": time.time(),
+        })
+        _append_conversation(record, _conversation_message(
+            "user", "action", "Continue the research", action_id=payload.action_id,
+        ))
+        _append_conversation(record, _conversation_message(
+            "assistant", "status", "I’m continuing from the existing research context.", action_id=payload.action_id,
+        ))
+        public = _public_recommendation_run(record)
+    _recommendation_executor.submit(_run_recommendation, run_id, prompt, organizer_id, state)
+    timer = threading.Timer(settings.recommendation_timeout_seconds, _expire_recommendation, args=(run_id,))
+    timer.daemon = True
+    timer.start()
+    return public
 
 
 @app.post("/api/surveys/{survey_id}/recommendations")
