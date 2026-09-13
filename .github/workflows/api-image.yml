@@ -2,7 +2,7 @@ name: Build and push API image
 
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [Group Reservations CI]
     types: [completed]
     branches: [main]
 
@@ -51,8 +51,8 @@ jobs:
       - name: Build and push API image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: app/api/Dockerfile
+          context: ./group-reservations
+          file: group-reservations/app/api/Dockerfile
           push: true
           tags: |
             ${{ steps.image.outputs.image }}:latest
