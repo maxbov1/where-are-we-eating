@@ -12,7 +12,7 @@ function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').repla
 function recommendationCacheKey(event, responseCount) { return `recommendation:${event?.surveyId || 'unknown'}:${responseCount || 0}`; }
 function readRecommendationCache(event, responseCount) { try { const cached = JSON.parse(localStorage.getItem(recommendationCacheKey(event, responseCount)) || 'null'); return cached?.answer ? cached : null; } catch (error) { return null; } }
 function writeRecommendationCache(event, responseCount, result) { try { localStorage.setItem(recommendationCacheKey(event, responseCount), JSON.stringify({ answer:result.answer || '', actions:result.response?.actions || [], fallback:Boolean(result.fallback) })); } catch (error) { /* Optional optimization. */ } }
-function setupLocationPicker(inputId, menuId, { citiesOnly = false, onSelect = () => {} } = {}) {
+function setupLocationPicker(inputId, menuId, { citiesOnly = false, locationContext = () => null, onSelect = () => {} } = {}) {
   const input = $(inputId); const menu = $(menuId); let sessionToken = crypto.randomUUID(); let timer;
   input.addEventListener('input', () => {
     onSelect(null); clearTimeout(timer); menu.innerHTML = ''; menu.classList.add('hidden');
@@ -20,6 +20,8 @@ function setupLocationPicker(inputId, menuId, { citiesOnly = false, onSelect = (
     timer = setTimeout(async () => {
       try {
         const query = new URLSearchParams({ input: input.value.trim(), cities_only: String(citiesOnly), session_token: sessionToken });
+        const context = locationContext() || {};
+        if (context.latitude != null && context.longitude != null) { query.set('near_lat', context.latitude); query.set('near_lng', context.longitude); query.set('radius_miles', '75'); }
         const response = await fetch(`${API_BASE}/api/locations/autocomplete?${query}`); if (!response.ok) return;
         const data = await response.json();
         menu.innerHTML = (data.predictions || []).map((item) => `<button type="button" class="location-option" data-place-id="${escapeHtml(item.place_id)}" data-label="${escapeHtml(item.text)}"><strong>${escapeHtml(item.main_text || item.text)}</strong><span>${escapeHtml(item.secondary_text || '')}</span></button>`).join('');
@@ -93,7 +95,7 @@ function renderQuestionOptions() {
 renderQuestionOptions();
 $('event-location').dataset.placeId = '';
 setupLocationPicker('event-location', 'organizer-location-menu', { citiesOnly: true, onSelect: (details) => { $('event-location').dataset.placeId = details?.place_id || ''; $('event-location').dataset.lat = details?.latitude ?? ''; $('event-location').dataset.lng = details?.longitude ?? ''; } });
-setupLocationPicker('guest-origin', 'guest-origin-menu', { onSelect: (details) => { state.guestOrigin = details; } });
+setupLocationPicker('guest-origin', 'guest-origin-menu', { locationContext: () => ({ latitude: state.event?.location_lat, longitude: state.event?.location_lng }), onSelect: (details) => { state.guestOrigin = details; } });
 $('question-topics').addEventListener('change', renderQuestionOptions);
 $('question-topics').addEventListener('click', (event) => { const button = event.target.closest('[data-open-question]'); if (!button) return; activeQuestion = button.dataset.openQuestion; renderQuestionOptions(); });
 $('question-options').addEventListener('change', (event) => {
@@ -349,6 +351,6 @@ function renderAgentActions(actions) {
   $('booking-handoff').querySelectorAll('[data-follow-up]').forEach((button) => button.addEventListener('click', () => { $('recommendations').insertAdjacentHTML('afterbegin', `<p class="response-summary">${escapeHtml(button.textContent)} selected — ask the agent to continue with this request.</p>`); }));
 }
 
-async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, dates:survey.dates, times:survey.times, availability:survey.availability, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href, expiresAt:survey.expires_at, isOpen:survey.is_open !== false }; if (survey.is_open === false) { $('survey-title').innerHTML = `Help pick <em>${survey.event_name}.</em>`; show('survey'); $('survey-form').classList.add('hidden'); $('survey-closed').classList.remove('hidden'); return; } prepareSurvey(); show('survey'); }
+async function loadPublicSurvey() { const token = new URLSearchParams(location.search).get('survey'); if (!token) return; const response = await fetch(`${API_BASE}/api/surveys/${token}`); const survey = await response.json(); if (!response.ok) return alert(survey.detail || 'Survey not found'); state.event = { name:survey.event_name, location:survey.location, location_lat:survey.location_lat, location_lng:survey.location_lng, dates:survey.dates, times:survey.times, availability:survey.availability, questions:survey.questions, publicToken:survey.public_token, surveyId:survey.id, url:location.href, expiresAt:survey.expires_at, isOpen:survey.is_open !== false }; if (survey.is_open === false) { $('survey-title').innerHTML = `Help pick <em>${survey.event_name}.</em>`; show('survey'); $('survey-form').classList.add('hidden'); $('survey-closed').classList.remove('hidden'); return; } prepareSurvey(); show('survey'); }
 const openOrganizerSettings = new URLSearchParams(location.search).get('organizer') === '1' && state.organizerId;
 if (openOrganizerSettings) { hydrateDates(); show('organizer'); loadOrganizerEvents(); } else loadPublicSurvey();

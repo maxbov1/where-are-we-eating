@@ -442,12 +442,15 @@ def locations_autocomplete(
     input: str = Query(min_length=2, max_length=120),
     session_token: str | None = Query(default=None, max_length=200),
     cities_only: bool = False,
+    near_lat: float | None = Query(default=None, ge=-90, le=90),
+    near_lng: float | None = Query(default=None, ge=-180, le=180),
+    radius_miles: float = Query(default=75, ge=1, le=75),
 ) -> dict[str, object]:
     """Proxy Google location predictions without exposing the Places key."""
     if not settings.google_places_api_key:
         raise HTTPException(status_code=503, detail="Google Places is not configured")
     try:
-        return {"predictions": autocomplete_locations(settings.google_places_api_key, input, session_token=session_token, cities_only=cities_only)}
+        return {"predictions": autocomplete_locations(settings.google_places_api_key, input, session_token=session_token, cities_only=cities_only, near_lat=near_lat, near_lng=near_lng, radius_miles=radius_miles)}
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Google Places location lookup failed") from exc
 
@@ -535,7 +538,7 @@ def survey(public_token: str) -> dict[str, object]:
     record = get_survey(public_token)
     if not record:
         raise HTTPException(status_code=404, detail="Survey not found")
-    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "dates", "times", "availability", "questions", "expires_at", "is_open")}
+    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "location_lat", "location_lng", "dates", "times", "availability", "questions", "expires_at", "is_open")}
 
 
 @app.get("/api/organizers/{organizer_id}/surveys")

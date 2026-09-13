@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 import re
+import math
 
 import httpx
 
@@ -119,12 +120,25 @@ def autocomplete_locations(
     *,
     session_token: str | None = None,
     cities_only: bool = False,
+    near_lat: float | None = None,
+    near_lng: float | None = None,
+    radius_miles: float = 75,
     max_results: int = 5,
 ) -> list[dict]:
     """Return Google Places predictions for city or guest-origin selection."""
     body: dict[str, object] = {"input": query, "includeQueryPredictions": False}
     if cities_only:
         body["includedPrimaryTypes"] = ["(cities)"]
+    if near_lat is not None and near_lng is not None:
+        radius = max(1.0, min(radius_miles, 75.0))
+        latitude_delta = radius / 69.0
+        longitude_delta = radius / (69.0 * max(math.cos(math.radians(near_lat)), 0.15))
+        body["locationRestriction"] = {
+            "rectangle": {
+                "low": {"latitude": max(-90.0, near_lat - latitude_delta), "longitude": max(-180.0, near_lng - longitude_delta)},
+                "high": {"latitude": min(90.0, near_lat + latitude_delta), "longitude": min(180.0, near_lng + longitude_delta)},
+            }
+        }
     if session_token:
         body["sessionToken"] = session_token
     response = httpx.post(
