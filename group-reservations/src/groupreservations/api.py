@@ -759,7 +759,7 @@ before or after it. Use exactly this shape:
   ],
   "blocker": {{"code":"...","title":"...","explanation":"...","next_step":"..."}} or null,
   "next_steps": ["one or two safe actions the organizer can take next"],
-  "actions": [{"id":"show_alternatives" or "adjust_preferences" or "refresh_research", "kind":"follow_up", "label":"button label"}]
+  "actions": [{{"id":"show_alternatives" or "adjust_preferences" or "refresh_research", "kind":"follow_up", "label":"button label"}}]
 }}
 The UI turns the primary and alternatives into linked restaurant cards and turns
 reservation.url values into buttons. Never fabricate a URL. Never claim that a
