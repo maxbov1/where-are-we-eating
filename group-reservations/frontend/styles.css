@@ -81,6 +81,25 @@ h1,h2,p { margin-top:0; } h1,h2 { letter-spacing:-.055em; } h1 { font-family:var
 @media (max-width:760px) { .screen { padding:40px 16px 64px; } .hero-copy { margin:28px auto 30px; } .lede { font-size:16px; } .auth-card { padding:24px 20px; } .recommendations,.recommendation-set,.share-tools { grid-template-columns:1fr; } .recommendation-primary,.recommendation-fit { grid-column:auto; } .page-heading { align-items:start; margin-bottom:22px; } .page-heading h1 { font-size:40px; } .results-card { padding:24px 20px; } .results-heading { align-items:start; flex-direction:column; } .results-heading .button { width:100%; } .survey-intro h1 { font-size:43px; } .date-grid { grid-template-columns:1fr; } .event-form { padding:24px 18px; } .modal { align-items:end; padding:12px; } .modal-card { max-height:calc(100dvh - 24px); border-radius:22px 22px 0 0; padding:30px 22px 34px; } .modal-intro { line-height:1.7; } .question-drawer-panel { border:0; border-radius:24px 24px 0 0; height:min(88dvh,720px); max-width:none; padding:38px 24px 28px; } .question-drawer-panel h3 { font-size:34px; } .topic-row { min-height:72px; padding-left:14px; } .topic-open { padding-right:0; } .qr-chip img { width:150px; height:150px; } }
 @media (max-width:380px) { .screen { padding-left:12px; padding-right:12px; } .auth-card,.event-form { padding-left:16px; padding-right:16px; } h1 { font-size:44px; } .page-heading h1 { font-size:36px; } }
 @media (max-width:760px) { .overview-heading { flex-direction:column; }.overview-heading .button { width:100%; }.overview-grid { grid-template-columns:1fr; }.overview-constraint { grid-column:auto; }.event-overview { padding:22px 18px; }.hub-heading { align-items:stretch; flex-direction:column; }.hub-heading .button { width:100%; }.booking-handoff { align-items:stretch; flex-direction:column; }.booking-handoff .button { width:100%; }.follow-up-actions { display:grid; }.follow-up-actions .text-button { min-height:44px; }.category-visual { align-items:start; flex-direction:column; } }
+
+/* Summary charts use the complete vote distribution, not only the winning option. */
+.overview-schedule { grid-column:1/-1; }
+.overview-distance { grid-column:1/-1; }
+.overview-category { min-height:270px; }
+.category-visual { min-height:180px; }
+.category-legend { list-style:none; display:grid; gap:10px; width:100%; margin:0; padding:0; }
+.category-legend li { display:grid; grid-template-columns:10px minmax(0,1fr) auto auto; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+.category-legend li i { width:10px; height:10px; border-radius:50%; }
+.category-legend li span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.category-legend li b { color:var(--forest); }
+.category-legend li small { min-width:34px; color:var(--muted); text-align:right; }
+.distance-visual { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:16px; }
+.distance-row { display:grid; gap:7px; }
+.distance-row > div:first-child { display:flex; justify-content:space-between; gap:10px; color:var(--muted); font-size:12px; }
+.distance-row b { color:var(--forest); white-space:nowrap; }
+.overview-constraint h3 { margin:0 0 12px; color:var(--ink); font-size:16px; }
+.constraint-list { display:flex; flex-wrap:wrap; gap:8px; }
+.constraint-list span { padding:8px 11px; border-radius:99px; background:var(--cream); color:var(--forest); font-size:12px; font-weight:700; }
 .agent-progress { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.72); }
 .progress-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--cream); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--forest); transition: width .35s ease; }

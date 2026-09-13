@@ -1,4 +1,4 @@
-// Standalone organizer entry flow. The original app.js remains unchanged.
+// Standalone organizer entry flow.
 const API_BASE = window.WAE_API_BASE || 'http://127.0.0.1:8000';
 const form = document.getElementById('signup-form');
 const email = document.getElementById('organizer-email');
@@ -32,7 +32,7 @@ form.addEventListener('submit', async (event) => {
     const user = await response.json();
     if (!response.ok) throw new Error(user.detail || 'Could not create organizer');
 
-    // Matches the existing app.js organizer persistence contract.
+    // Share the organizer session with the next page.
     localStorage.setItem('organizerEmail', email.value.trim());
     localStorage.setItem('organizerId', user.id);
     setMessage('Your place is saved.');

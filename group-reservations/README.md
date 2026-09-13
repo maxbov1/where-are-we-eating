@@ -1,52 +1,107 @@
-# Where Are We Eating? Group Reservations
+# Where Are We Eating?
 
-This repository contains the group-reservation POC and its Amazon Bedrock
-AgentCore runtime. Google Places owns restaurant discovery; AgentCore exposes
-the existing Python agent through one small HTTP adapter.
+An agent that turns "let's figure out where to eat" from an unanswered group
+text into a ranked, evidence-checked restaurant recommendation — no app to
+install, no account to create.
+
+## The problem
+
+Any group that has to agree on a restaurant knows the ritual: a text thread,
+a poll nobody finishes, someone picking a place half the group didn't want.
+It's a small problem, but it repeats constantly, and it's exactly the kind of
+everyday coordination friction that keeps small groups — the ones that don't
+have an events budget or a designated planner — from getting together as
+often as they'd like.
+
+## Who it's for
+
+Any group of people who need to agree on a restaurant without a group-chat
+spiral: friend groups, book clubs, neighborhood associations, congregations,
+coworkers, family reunions. The organizer creates the event and owns the
+decision; guests answer a short survey anonymously, with no account
+required. The pattern generalizes to any small group that needs one person
+to turn scattered preferences into a single confident answer.
+
+## Why it matters
+
+Coordination overhead is a tax that falls hardest on the groups least
+equipped to pay it — the ones without a dedicated organizer or a budget for
+event-planning tools. Lowering that tax by a few minutes, for free, adds up
+over a lot of Friday nights.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Organizer creates event] --> B[Guests answer a short survey]
+    B --> C[API aggregates preferences]
+    C --> D["AgentCore agent searches restaurants<br/>and checks real availability"]
+    D --> E["Ranked recommendation<br/>with evidence and uncertainty"]
+    E --> F[Organizer reviews and confirms]
+```
+
+1. **Organizer creates an event** — a title, a few candidate dates and
+   times, and a short set of survey questions (cuisine, budget, dietary
+   needs, travel distance).
+2. **Guests answer anonymously** via a shared link — no account, under 30
+   seconds.
+3. **The API deterministically aggregates** responses into vote counts,
+   participation rate, and a confidence score, *before* any model call.
+4. **The agent (Strands on Bedrock, hosted on Amazon Bedrock AgentCore
+   Runtime)** searches Google Places for candidates, then inspects each
+   restaurant's real reservation page to check actual availability — it
+   never turns missing evidence into a positive claim.
+5. **The organizer reviews three ranked options**, each with its evidence
+   and a plain-language explanation, and confirms the booking directly with
+   the restaurant. Nothing is booked automatically.
+
+For the full technical design — including what's real today versus what's
+planned — see [`ARCHITECTURE.md`](./ARCHITECTURE.md). Rendered architecture,
+stack, and request-flow diagrams live in [`docs/diagrams/`](./docs/diagrams/).
 
 ## Project Structure
 
 ```
 repository-root/
-├── app/waweagent/          # Minimal AgentCore runtime and Docker inputs
-│   ├── main.py
-│   └── Dockerfile
-├── src/                    # Existing group-reservations Python package
-├── frontend/               # Browser client
-├── agentcore/
-│   ├── agentcore.json      # Project config (agents, memories, credentials, gateways, evaluators)
-│   ├── aws-targets.json    # Deployment targets (account + region)
-│   ├── .env.local          # Secrets — API keys (gitignored)
-│   ├── .llm-context/       # TypeScript type definitions for AI assistants
-│   │   ├── agentcore.ts    # AgentCoreProjectSpec types
-│   │   └── aws-targets.ts  # Deployment target types
-│   └── cdk/                # CDK infrastructure (@aws/agentcore-cdk)
+├── app/
+│   ├── api/                # FastAPI service Dockerfile (deployed to Amazon ECS)
+│   └── waweagent/          # AgentCore HTTP adapter (main.py, Dockerfile)
+├── src/groupreservations/  # Application package: api.py, agent.py, database.py, ...
+├── frontend/               # Static browser client (Vercel)
+├── agentcore/              # AgentCore project config, CDK infra
+├── docs/diagrams/          # Rendered architecture/stack/request-flow diagrams
 └── tests/
 ```
 
-There is one AgentCore project at the repository root. The container build
-uses the repository root as its explicit context so it can install `src/`,
-while `.dockerignore` excludes frontend assets, tests, local state, secrets,
-and generated infrastructure dependencies.
+The FastAPI service and the AgentCore-hosted agent are two independently
+deployed pieces: the API calls the deployed AgentCore runtime via
+`boto3`'s `bedrock-agentcore` client (`invoke_agent_runtime`) for every
+recommendation. See `ARCHITECTURE.md` for the full component and deployment
+diagram.
 
 ## Getting Started
 
 ### Prerequisites
 
 - **Node.js** 20.x or later
-- **Python 3.10+** and **uv** for Python agents ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
+- **Python 3.11+** and **uv** for the Python package
+  ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
 - **AWS credentials** configured (`aws configure` or environment variables)
-- **Docker** (only for Container build agents)
+- **Docker** (for building either container image)
 
-### Development
+### Run the API locally
 
-Run the adapter locally:
+```bash
+PYTHONPATH=src uvicorn groupreservations.api:app --reload
+```
+
+### Run the AgentCore adapter locally
 
 ```bash
 PYTHONPATH=src python app/waweagent/main.py
 ```
 
-Test the container before deploying:
+Test either container before deploying:
 
 ```bash
 docker build -t waweagent -f app/waweagent/Dockerfile .
@@ -54,20 +109,27 @@ docker run --rm -p 8080:8080 waweagent
 curl http://localhost:8080/ping
 ```
 
-### Validate Invocation Input
+### Deploy
 
-Validate runtime invocation payloads before forwarding them to an agent framework. Keep user prompts typed as strings
-and pass only prompt text to the agent.
-
-### Deployment
-
-Deploy to AWS:
+The API image builds and rolls out to ECS automatically on every push to
+`main` (see `.github/workflows/`). Deploy the AgentCore runtime with:
 
 ```bash
 agentcore deploy
 ```
 
-## Commands
+## AgentCore project reference
+
+This repository's `agentcore/` directory is one AgentCore project. The
+container build for the AgentCore runtime uses the repository root as its
+explicit Docker context so it can install `src/`, while `.dockerignore`
+excludes frontend assets, tests, local state, secrets, and generated
+infrastructure dependencies.
+
+The project uses a **flat resource model** — agents, memories, credentials,
+gateways, evaluators, and policies are top-level arrays in
+`agentcore/agentcore.json`. Resources are independent; agents discover
+memories and credentials at runtime via environment variables or SDK calls.
 
 | Command | Description |
 | --- | --- |
@@ -80,47 +142,8 @@ agentcore deploy
 | `agentcore invoke` | Invoke agent (local or deployed) |
 | `agentcore logs` | View agent logs |
 | `agentcore traces` | View agent traces |
-| `agentcore eval` | Run evaluations |
-| `agentcore package` | Package agent artifacts |
-| `agentcore validate` | Validate configuration |
-| `agentcore pause` | Pause a deployed agent |
-| `agentcore resume` | Resume a paused agent |
-| `agentcore fetch` | Fetch remote resource definitions |
-| `agentcore import` | Import existing resources |
-| `agentcore update` | Check for CLI updates |
 
-## Configuration
-
-Edit the JSON files in `agentcore/` to configure the root project. See
-`agentcore/.llm-context/` for type definitions and validation constraints.
-
-The project uses a **flat resource model** — agents, memories, credentials, gateways, evaluators, and policies are top-level arrays in `agentcore.json`. Resources are independent; agents discover memories and credentials at runtime via environment variables or SDK calls.
-
-## Resources
-
-| Resource | Purpose |
-| --- | --- |
-| Agent (runtime) | HTTP, MCP, or A2A agent deployed to AgentCore Runtime |
-| Memory | Persistent context storage with configurable strategies |
-| Credential | API key or OAuth credential providers |
-| Gateway | MCP gateway that routes tool calls to targets |
-| Gateway Target | Tool implementation (Lambda, MCP server, OpenAPI, Smithy, API Gateway) |
-| Evaluator | Custom LLM-as-a-Judge or code-based evaluation |
-| Online Eval Config | Continuous evaluation pipeline for deployed agents |
-| Policy | Cedar authorization policies for gateway tools |
-
-### Agent Types
-
-- **Template agents**: Created from framework templates (Strands, LangChain/LangGraph, GoogleADK, OpenAI Agents, Autogen)
-- **BYO agents**: Bring your own code with `agentcore add agent --type byo`
-- **Import agents**: Import existing Bedrock agents with `agentcore import`
-
-### Build Types
-
-- **CodeZip**: Python source packaged as a zip and deployed directly to AgentCore Runtime
-- **Container**: Docker image built via CodeBuild (ARM64), pushed to ECR, and deployed to AgentCore Runtime
-
-## Documentation
+### Documentation
 
 - [AgentCore CLI](https://github.com/aws/agentcore-cli)
 - [AgentCore CDK Constructs](https://github.com/aws/agentcore-l3-cdk-constructs)

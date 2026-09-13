@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 import time
 import uuid
@@ -531,6 +532,9 @@ def locations_autocomplete(
 class LocationDetailsRequest(BaseModel):
     place_id: str = Field(min_length=1, max_length=200)
     session_token: str | None = Field(default=None, max_length=200)
+    near_lat: float | None = Field(default=None, ge=-90, le=90)
+    near_lng: float | None = Field(default=None, ge=-180, le=180)
+    radius_miles: float = Field(default=75, ge=1, le=75)
 
 
 @app.post("/api/locations/details")
@@ -539,7 +543,19 @@ def locations_details(payload: LocationDetailsRequest) -> dict[str, object]:
     if not settings.google_places_api_key:
         raise HTTPException(status_code=503, detail="Google Places is not configured")
     try:
-        return get_location_details(settings.google_places_api_key, payload.place_id, session_token=payload.session_token)
+        details = get_location_details(settings.google_places_api_key, payload.place_id, session_token=payload.session_token)
+        if payload.near_lat is not None and payload.near_lng is not None and details.get("latitude") is not None and details.get("longitude") is not None:
+            lat_delta = math.radians(float(details["latitude"]) - payload.near_lat)
+            lng_delta = math.radians(float(details["longitude"]) - payload.near_lng)
+            lat1 = math.radians(payload.near_lat)
+            lat2 = math.radians(float(details["latitude"]))
+            haversine = math.sin(lat_delta / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(lng_delta / 2) ** 2
+            distance_miles = 3958.8 * 2 * math.asin(math.sqrt(haversine))
+            if distance_miles > payload.radius_miles:
+                raise HTTPException(status_code=422, detail="Location must be within 75 miles of the meetup city")
+        return details
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Google Places location details failed") from exc
 

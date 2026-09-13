@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+import pytest
+from fastapi import HTTPException
 from groupreservations import api
 
 
@@ -54,3 +56,20 @@ def test_public_recommendation_run_excludes_raw_agent_answer_and_internal_contex
     assert "organizer_id" not in public
     assert "_prompt" not in public
     assert "_state" not in public
+
+
+def test_guest_location_details_rejects_places_outside_meetup_radius(monkeypatch):
+    monkeypatch.setattr(api.settings, "google_places_api_key", "test-key")
+    monkeypatch.setattr(api, "get_location_details", lambda *args, **kwargs: {
+        "place_id": "far-away",
+        "label": "Portland CVS",
+        "latitude": 45.5152,
+        "longitude": -122.6784,
+    })
+
+    with pytest.raises(HTTPException) as error:
+        api.locations_details(api.LocationDetailsRequest(
+            place_id="far-away", near_lat=33.4274, near_lng=-117.6126,
+        ))
+
+    assert error.value.status_code == 422

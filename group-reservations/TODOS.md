@@ -71,7 +71,12 @@ Remaining work is grouped into three tiers by difficulty:
 - [ ] Configure AgentCore inbound authorization and pass the verified
       organizer identity as the actor ID. Keep surveys and responses in the
       application database, not AgentCore session state.
-- [ ] Add production provider integrations through AgentCore Identity using
-      organizer-delegated credentials only when booking is explicitly
-      confirmed. The local agent currently uses verified browser pages and
-      does not expose provider mutation tools.
+- [ ] Add production provider integrations. Sequencing matters here: validate
+      with real friend-group usage first, then pursue official developer API
+      access with reservation-as-a-service providers (Toast, OpenTable, Resy)
+      rather than deepening browser automation, since multi-step forms and
+      bot detection make that path unreliable against large providers today.
+      If official APIs remain out of reach, AgentCore Identity with
+      organizer-delegated credentials is the fallback technical mechanism —
+      only when booking is explicitly confirmed. The local agent currently
+      uses verified browser pages and does not expose provider mutation tools.

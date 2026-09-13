@@ -1,5 +1,10 @@
 # Group Reservations Architecture
 
+Rendered diagrams (system architecture, technical stack, and a worked
+request-flow example with sample data) live in
+[`docs/diagrams/`](./docs/diagrams/). The Mermaid diagrams below render
+inline on GitHub and track the same facts at a lighter level of detail.
+
 ## AgentCore runtime layout
 
 AgentCore is a single project rooted at `agentcore/`. The runtime adapter and
@@ -20,18 +25,21 @@ the adapter files. Validate the image with plain Docker before running
 
 ## System context
 
-```text
-Organizer UI ──┐
-Guest survey ──┼──> Application API ──> Event/session store
-SMS link ──────┘              │
-                              ├──> Preference aggregation
-                              ├──> Restaurant search + place hydration
-                              ├──> Reservation evidence
-                              └──> Recommendation agent
+```mermaid
+flowchart LR
+    Organizer[Organizer UI] --> API["Application API<br/>FastAPI on Amazon ECS"]
+    Guest[Guest survey] --> API
+    API --> Store[("Event / session store<br/>SQLite today")]
+    API --> Agg[Preference aggregation]
+    API -->|"invoke_agent_runtime (boto3)"| Agent["Recommendation agent<br/>Bedrock AgentCore Runtime"]
+    Agent --> Places[Restaurant search + hydration]
+    Agent --> Evidence[Reservation evidence]
 ```
 
 The organizer owns the event. Guests own only their response. The public URL
-must never grant access to organizer controls.
+must never grant access to organizer controls. The API and the agent are two
+independently deployed services: the API never runs agent logic in-process,
+it invokes the deployed AgentCore runtime for every recommendation.
 
 ### Identity and third-party session isolation
 
@@ -110,11 +118,17 @@ or survey creation have stricter limits than ordinary reads. Production should
 also enforce an edge/API-Gateway limiter because process-local state is not
 shared across replicas.
 
-The repository now contains a local web API and static survey UI. The local
+The repository now contains a local web API and static multi-page survey UI. The local
 SQLite schema mirrors durable production storage, while Cognito and Aurora
 PostgreSQL are the production targets. SMS delivery remains a planned
 application component. The local API exposes deterministic aggregation before
 agent orchestration.
+
+The browser flow uses one HTML entrypoint per product state: `landing.html`,
+`event-creation.html`, `survey-creation.html`, `share-event.html`,
+`guest-survey.html`, `organizer-events.html`, `event-overview.html`, and
+`recommendations.html`. `index.html` remains only as a compatibility redirect
+for old links. The former all-in-one `app.js` screen router is retired.
 
 ## Data Flow
 
@@ -146,6 +160,27 @@ terminal state. A contract action such as `refresh_research` is sent to
 `POST /api/recommendations/{run_id}/actions`; the API reuses the run's
 AgentCore session and includes the last validated contract as bounded context.
 
+```mermaid
+sequenceDiagram
+    participant G as Guests
+    participant O as Organizer
+    participant API as FastAPI API
+    participant DB as SQLite
+    participant AC as AgentCore Runtime
+
+    G->>API: POST /surveys/{token}/responses
+    API->>DB: INSERT survey_responses
+    O->>API: POST /surveys/{id}/recommendations
+    API->>DB: aggregate_survey()
+    API->>AC: invoke_agent_runtime(prompt)
+    API-->>O: 202 {run_id, status: queued}
+    loop poll every ~2s until complete
+        O->>API: GET /recommendations/{run_id}
+    end
+    AC-->>API: ranked recommendation (JSON)
+    API-->>O: 200 {status: complete, response}
+```
+
 Agent observability is provided by lifecycle hooks. Trace records capture the
 phase, tool, sanitized input, result summary, evidence/source references,
 transition reason, state changes, and final status without logging private
@@ -156,6 +191,14 @@ restaurant-page inspection. Embedded provider URLs, including Toast iframe
 URLs, are promoted to explicit candidate actions and must be opened and
 verified before availability controls can be used. Missing availability
 evidence remains unknown; final booking confirmation remains organizer-gated.
+
+Multi-step reservation forms and bot detection on large platforms make
+automated verification unreliable against some providers today; this is a
+real, known limitation, not an edge case. The near-term plan is to validate
+with real usage first — regular friend-group organizers actually using this
+— and only then pursue official developer API integrations with providers
+such as Toast, OpenTable, and Resy, rather than investing further in browser
+automation against anti-bot defenses.
 
 ## Domain objects
 

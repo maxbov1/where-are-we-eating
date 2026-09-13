@@ -3,136 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="0; url=landing.html" />
     <title>Where Are We Eating?</title>
-    <meta name="description" content="Turn group-chat chaos into one dinner plan." />
-    <link rel="icon" type="image/png" href="assets/eatingfavicon.png" />
-    <link rel="stylesheet" href="design-system.css" />
-    <link rel="stylesheet" href="styles.css" />
-    <script>
-      // Keep guest invitations on the compatibility route while making
-      // Kanishka's organizer flow the default application entrypoint.
-      const routeParams = new URLSearchParams(window.location.search);
-      if (routeParams.has('survey')) {
-        window.location.replace(`guest-survey.html${window.location.search}${window.location.hash}`);
-      } else if (!routeParams.has('organizer')) {
-        window.location.replace(`landing.html${window.location.search}${window.location.hash}`);
-      }
-    </script>
   </head>
   <body>
-    <div class="shell">
-      <main>
-        <section class="screen active" id="signup-screen" aria-labelledby="signup-title">
-          <div class="hero-copy">
-            <p class="eyebrow">For those indecisive friend groups</p>
-            <h1 id="signup-title">Skip the planning.<br /><em>Keep the memories.</em></h1>
-            <p class="lede">Get the crew on the same page, then let us find a table everyone can get excited about.</p>
-          </div>
-          <form class="card auth-card" id="signup-form">
-            <div class="card-kicker">Your next gathering</div>
-            <h2>Get the crew together.</h2>
-            <label>Email address <input required type="email" id="organizer-email" placeholder="you@example.com" /></label>
-            <button class="button primary" type="submit">Start an event <span>→</span></button>
-          </form>
-        </section>
-
-        <section class="screen" id="organizer-screen" aria-labelledby="organizer-title">
-          <div class="page-heading">
-            <div><p class="eyebrow">For the group chat</p><h1 id="organizer-title">Get everyone on the same page.</h1></div>
-          </div>
-          <section class="organizer-hub" id="organizer-hub">
-            <div class="hub-heading"><div><div class="card-kicker">Your events</div><h2>Keep the useful bits.</h2></div><button class="button primary" id="start-event" type="button">Plan an event <span>→</span></button></div>
-            <div class="event-shelf" id="event-shelf"><p class="response-summary">Loading your events…</p></div>
-          </section>
-          <section class="card event-overview hidden" id="event-overview" aria-labelledby="overview-title">
-            <div class="overview-heading"><div><div class="card-kicker">Event overview</div><h2 id="overview-title"></h2><p id="overview-location" class="fine-print"></p></div><button class="button primary" id="find-recommendation" type="button">Find my recommendation <span>→</span></button></div>
-            <div class="overview-grid" id="overview-grid"></div>
-          </section>
-          <div class="build-page hidden" id="event-builder">
-            <form class="card event-form" id="event-form">
-              <div class="builder-form-heading"><div class="card-kicker">New event</div><button class="text-button" id="new-event" type="button">Start over</button></div>
-              <div class="card-kicker">Set the vibe</div>
-              <h2>Where at?</h2>
-              <label>Event name <input required id="event-name" value="Friday dinner" /></label>
-              <label>City <div class="location-picker"><input required minlength="2" maxlength="160" pattern="[A-Za-z0-9][A-Za-z0-9 .,'-]{1,158}" autocomplete="address-level2" id="event-location" value="San Francisco" /><div class="location-menu hidden" id="organizer-location-menu" role="listbox"></div></div><span class="label-note">Choose a city. This becomes the broad restaurant search area.</span></label>
-              <div class="field-label">Set the times for each date</div>
-              <div class="schedule-editor" id="schedule-editor"></div>
-              <label>Close responses after
-                <select id="event-expiry">
-                  <option value="2">2 days (default)</option>
-                  <option value="3">3 days</option>
-                  <option value="7">1 week</option>
-                  <option value="14">2 weeks</option>
-                </select>
-                <span class="label-note">Guests can’t respond after this. You can still view results.</span>
-              </label>
-              <div class="field-label">What should everyone weigh in on?</div>
-              <div class="topic-list" id="question-topics" aria-label="Survey topics"></div>
-              <div class="question-drawer hidden" id="question-drawer" role="dialog" aria-modal="true" aria-labelledby="question-drawer-title">
-                <div class="question-drawer-backdrop" data-close-question></div>
-                <div class="question-drawer-panel">
-                  <button class="modal-close" type="button" data-close-question aria-label="Close question editor">×</button>
-                  <div class="card-kicker">What guests see</div>
-                  <h3 id="question-drawer-title">Edit question</h3>
-                  <p class="drawer-intro">Turn choices on or off. Guests only see the ones you leave active.</p>
-                  <div class="question-options" id="question-options" aria-live="polite"></div>
-                  <button class="button primary full" type="button" data-close-question>Done</button>
-                </div>
-              </div>
-              <button class="button primary" type="submit">Generate share link <span>→</span></button>
-            </form>
-          </div>
-          <div class="modal hidden" id="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title">
-            <div class="modal-backdrop" data-close-modal></div>
-            <div class="modal-card">
-              <button class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
-              <div class="card-kicker">Your invitation is ready</div>
-              <h2 id="share-title">Now bring everyone in.</h2>
-              <p class="modal-intro">Drop this into the group chat. Everyone can choose what works without making an account.</p>
-              <p class="fine-print" id="expiry-note"></p>
-              <div class="share-tools">
-                <div class="qr-chip"><img id="qr-code" alt="QR code for the group survey" /><span>Scan to vote</span></div>
-                <div class="share-fields">
-                  <label>Survey link <input id="survey-link" readonly /></label>
-                  <button class="button secondary" id="copy-link" type="button">Copy link</button>
-                  <label>Group message <textarea id="share-message" readonly></textarea></label>
-                  <button class="button primary" id="copy-message" type="button">Copy message <span>→</span></button>
-                  <p class="copied hidden" id="copied-note">Copied — ready for the group chat.</p>
-                </div>
-              </div>
-              <button class="button primary full" id="view-results" type="button">View responses and recommendations <span>→</span></button>
-              <button class="button ghost full" id="open-survey" type="button">Preview the survey</button>
-            </div>
-          </div>
-          <section class="card results-card hidden" id="results-card">
-            <div class="results-heading"><div><div class="card-kicker">Let the group decide</div><h2 id="results-title">Responses will land here.</h2></div><button class="button primary" id="run-agent" type="button">Find our top 3 <span>→</span></button></div>
-            <button class="text-button recommendation-back hidden" id="recommendation-back" type="button">← Back to event summary</button>
-            <div id="response-summary" class="response-summary"></div>
-            <div id="booking-handoff" class="booking-handoff hidden"></div>
-            <div id="recommendations" class="recommendations"></div>
-          </section>
-        </section>
-
-        <section class="screen" id="survey-screen" aria-labelledby="survey-title">
-          <div class="survey-wrap">
-            <div class="survey-brand">where are we eating?</div>
-            <div class="survey-progress"><span></span></div>
-            <div class="survey-intro"><p class="eyebrow">A little help from the whole table</p><h1 id="survey-title">Help pick <em>Friday dinner.</em></h1><p id="survey-location">San Francisco · about 30 seconds · no sign-up</p></div>
-            <form class="survey-form" id="survey-form">
-              <fieldset><legend>When works?</legend><p class="question-help">Pick the dates and times that work for you. Each day can have different time options.</p><div class="schedule-choices" id="survey-schedule"></div></fieldset>
-              <fieldset><legend>Where are you coming from?</legend><p class="question-help">Optional. Choose a neighborhood, landmark, ZIP code, or nearby place. We use it privately to balance travel for the group—no exact home address needed.</p><div class="location-picker"><input id="guest-origin" minlength="2" maxlength="160" autocomplete="street-address" placeholder="e.g. Mission District or SFO" /><div class="location-menu hidden" id="guest-origin-menu" role="listbox"></div></div></fieldset>
-              <div id="survey-question-fields"></div>
-              <button class="button primary full" type="submit">Send my picks <span>→</span></button>
-            </form>
-            <div class="survey-thanks hidden" id="survey-thanks"><div class="thanks-mark">✓</div><p class="eyebrow">You're in</p><h1>Thanks for weighing in.</h1><p>The organizer will get the group’s best options soon.</p><button class="button ghost" id="back-organizer" type="button">Back to organizer view</button></div>
-            <div class="survey-thanks hidden" id="survey-closed"><div class="thanks-mark">⌛</div><p class="eyebrow">This survey is closed</p><h1>Voting has wrapped up.</h1><p>The organizer isn’t accepting new responses for this event.</p></div>
-          </div>
-        </section>
-      </main>
-    </div>
-    <script src="config.js"></script>
-    <script src="vendor/qrcode.js"></script>
-    <script type="module">import { animate } from 'https://cdn.jsdelivr.net/npm/motion@12.23.12/+esm'; window.motionAnimate = animate;</script>
-    <script src="app.js"></script>
+    <script>
+      const query = window.location.search;
+      const params = new URLSearchParams(query);
+      const destination = params.has('survey')
+        ? `guest-survey.html${query}`
+        : params.has('organizer')
+          ? `organizer-events.html${query}`
+          : `landing.html${query}`;
+      window.location.replace(destination);
+    </script>
+    <p><a href="landing.html">Continue to Where Are We Eating?</a></p>
   </body>
 </html>
