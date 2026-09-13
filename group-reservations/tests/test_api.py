@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 import pytest
 from fastapi import HTTPException
+from types import SimpleNamespace
 from groupreservations import api
 
 
@@ -59,7 +60,7 @@ def test_public_recommendation_run_excludes_raw_agent_answer_and_internal_contex
 
 
 def test_guest_location_details_rejects_places_outside_meetup_radius(monkeypatch):
-    monkeypatch.setattr(api.settings, "google_places_api_key", "test-key")
+    monkeypatch.setattr(api, "settings", SimpleNamespace(google_places_api_key="test-key"))
     monkeypatch.setattr(api, "get_location_details", lambda *args, **kwargs: {
         "place_id": "far-away",
         "label": "Portland CVS",
