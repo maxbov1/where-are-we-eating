@@ -3,7 +3,7 @@
 * { box-sizing:border-box; }
 .hidden { display:none !important; }
 body { margin:0; min-width:320px; color:var(--ink); font-family:'Alegreya Sans',sans-serif; background:#79603b url('assets/supper-background.jpg') center top / cover fixed no-repeat; }
-.share-page { min-height:100svh; padding:clamp(30px,7vw,90px) 20px; display:grid; place-items:center; }
+.share-page { min-height:100svh; padding:clamp(30px,7vw,90px) 20px var(--page-bottom-space); display:grid; place-items:center; }
 .share-card { width:min(900px,100%); padding:clamp(28px,6vw,68px); background:rgba(249,240,216,.93); box-shadow:0 20px 55px rgba(63,35,17,.24); }
 .share-header { display:flex; justify-content:space-between; align-items:start; gap:24px; border-bottom:1px solid rgba(81,48,31,.3); padding-bottom:24px; }
 .share-header a { color:var(--muted); font-size:12px; }
@@ -13,7 +13,7 @@ h1 { margin:7px 0 0; font:400 clamp(42px,6vw,70px)/1.05 'DM Serif Display',Georg
 .share-grid { display:grid; grid-template-columns:220px 1fr; gap:clamp(28px,7vw,70px); padding-top:34px; align-items:start; }
 .qr-panel { text-align:center; }.qr-frame { display:grid; place-items:center; min-height:220px; padding:16px; background:#fffdf0; border:1px solid var(--line); }.qr-frame img { display:block; width:180px; height:180px; }.qr-label { margin:12px 0 0; color:var(--muted); font-size:11px; }
 .share-actions { display:grid; gap:22px; }.action-block { display:grid; gap:8px; }.action-block label { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }.action-block input,.action-block textarea { width:100%; border:1px solid var(--line); border-radius:2px; background:rgba(255,253,239,.75); color:var(--ink); font:13px/1.5 'Libre Baskerville',Georgia,serif; padding:12px 13px; }.action-block textarea { resize:vertical; }.action-block button { width:100%; padding:13px 16px; cursor:pointer; font:700 11px 'Libre Baskerville',Georgia,serif; }.primary-button { border:1px solid #4e2c1c; background:var(--accent); color:#fff8e7; }.secondary-button { border:1px solid var(--accent); background:transparent; color:var(--accent); }.share-status { min-height:18px; margin:0; color:var(--accent); font-size:11px; text-align:center; }.footer-note { margin:30px 0 0; color:var(--muted); font-size:10px; line-height:1.6; text-align:center; }
-@media (max-width:650px) { body { background:var(--paper); }.share-page { padding:18px 12px 36px; place-items:start center; }.share-card { padding:25px 18px 30px; }.share-header { flex-direction:column; gap:14px; }.share-header a { display:flex; min-height:44px; align-items:center; }.share-grid { grid-template-columns:1fr; gap:24px; padding-top:24px; }.qr-panel { max-width:240px; margin:auto; }.action-block button { min-height:48px; }.footer-note { font-size:11px; line-height:1.6; } }
+@media (max-width:650px) { body { background:var(--paper); }.share-page { padding:18px 12px var(--page-bottom-space); place-items:start center; }.share-card { padding:25px 18px 30px; }.share-header { flex-direction:column; gap:14px; }.share-header a { display:flex; min-height:44px; align-items:center; }.share-grid { grid-template-columns:1fr; gap:24px; padding-top:24px; }.qr-panel { max-width:240px; margin:auto; }.action-block button { min-height:48px; }.footer-note { font-size:11px; line-height:1.6; } }
 .action-block { gap:10px; }
 .action-block button { min-height:50px; padding:14px 20px; font-family:'Alegreya Sans',sans-serif; font-size:13px; letter-spacing:.04em; }
 .primary-button,.secondary-button { border-radius:2px; }

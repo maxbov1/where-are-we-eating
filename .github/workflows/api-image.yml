@@ -49,6 +49,7 @@ jobs:
           echo "sha_tag=${SHA::12}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push API image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ./group-reservations
@@ -57,3 +58,19 @@ jobs:
           tags: |
             ${{ steps.image.outputs.image }}:latest
             ${{ steps.image.outputs.image }}:${{ steps.image.outputs.sha_tag }}
+
+      - name: Roll out image to ECS Express Mode
+        env:
+          ECS_SERVICE_ARN: ${{ vars.ECS_SERVICE_ARN }}
+          IMAGE: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.sha_tag }}
+        run: |
+          test -n "$ECS_SERVICE_ARN" || {
+            echo "Missing repository variable ECS_SERVICE_ARN"
+            exit 1
+          }
+
+          aws ecs update-express-gateway-service \
+            --region "$AWS_REGION" \
+            --service-arn "$ECS_SERVICE_ARN" \
+            --primary-container "{\"image\":\"$IMAGE\"}" \
+            --no-cli-pager

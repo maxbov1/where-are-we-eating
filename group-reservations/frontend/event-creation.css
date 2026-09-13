@@ -4,7 +4,7 @@
 * { box-sizing: border-box; }
 [hidden], #organizer-choices[hidden], #signup-form[hidden] { display: none !important; }
 body { margin: 0; min-width: 320px; color: var(--ink); font-family: 'Alegreya Sans', sans-serif; }
-.supper-page { position: relative; display: grid; min-height: 100svh; overflow: hidden; background: #765832; }
+.supper-page { position: relative; display: grid; min-height: 100svh; overflow: auto; padding-bottom: var(--page-bottom-space); background: #765832; }
 .dinner-scene { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(46, 27, 15, .12), rgba(46, 27, 15, 0) 48%), url('assets/supper-background.jpg') center / cover no-repeat; filter: saturate(.86) contrast(.98); }
 .invitation { position: relative; z-index: 1; background-color: var(--paper); background-image: linear-gradient(rgba(123, 87, 42, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(123, 87, 42, .02) 1px, transparent 1px); background-size: 7px 7px; }
 .invitation { align-self: center; justify-self: end; width: min(515px, calc(100% - 40px)); min-height: 325px; margin: 14vh 8% 0 0; border: 5px dotted rgba(81, 48, 31, .72); outline: 2px solid rgba(255, 255, 255, .68); outline-offset: -12px; box-shadow: 0 12px 28px rgba(41, 23, 11, .25); transform: translateY(82px); }

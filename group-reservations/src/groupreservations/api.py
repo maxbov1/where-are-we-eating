@@ -317,7 +317,7 @@ def _enqueue_recommendation(prompt: str, organizer_id: str, state: AgentState) -
 
 class GuestResponse(BaseModel):
     dates: list[str] = Field(min_length=1, max_length=3)
-    times: list[str] = Field(min_length=1, max_length=3)
+    times: list[str] = Field(min_length=1, max_length=9)
     availability: dict[str, list[str]] = Field(default_factory=dict)
     cuisines: list[str] = Field(default_factory=list, max_length=2)
     dietary: list[str] = Field(default_factory=list, max_length=10)
@@ -335,7 +335,7 @@ class RecommendationRequest(BaseModel):
     event_name: str = Field(min_length=1, max_length=120)
     location: str = Field(min_length=1, max_length=160)
     dates: list[str] = Field(min_length=1, max_length=3)
-    times: list[str] = Field(min_length=1, max_length=3)
+    times: list[str] = Field(min_length=1, max_length=9)
     availability: dict[str, list[str]] = Field(default_factory=dict)
     responses: list[GuestResponse] = Field(max_length=500)
     questions: dict[str, list[str]] = Field(default_factory=dict)
@@ -352,7 +352,7 @@ class SurveyRequest(BaseModel):
     event_name: str = Field(min_length=1, max_length=120)
     location: str = Field(min_length=1, max_length=160)
     dates: list[str] = Field(min_length=1, max_length=3)
-    times: list[str] = Field(min_length=1, max_length=3)
+    times: list[str] = Field(min_length=1, max_length=9)
     availability: dict[str, list[str]] = Field(default_factory=dict)
     questions: dict[str, list[str]] = Field(default_factory=dict)
     location_place_id: str | None = Field(default=None, max_length=200)
@@ -378,7 +378,7 @@ class SurveyUpdateRequest(BaseModel):
     event_name: str | None = Field(default=None, min_length=1, max_length=120)
     location: str | None = Field(default=None, min_length=1, max_length=160)
     dates: list[str] | None = Field(default=None, min_length=1, max_length=3)
-    times: list[str] | None = Field(default=None, min_length=1, max_length=3)
+    times: list[str] | None = Field(default=None, min_length=1, max_length=9)
     availability: dict[str, list[str]] | None = None
     questions: dict[str, list[str]] | None = None
     location_place_id: str | None = Field(default=None, max_length=200)
@@ -400,7 +400,7 @@ class SurveyUpdateRequest(BaseModel):
 class SurveyResponseRequest(BaseModel):
     respondent_token: str = Field(min_length=8, max_length=120)
     dates: list[str] = Field(min_length=1, max_length=3)
-    times: list[str] = Field(min_length=1, max_length=3)
+    times: list[str] = Field(min_length=1, max_length=9)
     availability: dict[str, list[str]] = Field(default_factory=dict)
     cuisines: list[str] = Field(default_factory=list, max_length=2)
     dietary: list[str] = Field(default_factory=list, max_length=10)

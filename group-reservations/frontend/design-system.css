@@ -17,6 +17,7 @@
   --space-8: 2rem;
   --space-10: 2.5rem;
   --space-12: 3rem;
+  --page-bottom-space: clamp(3rem, 8vw, 6rem);
   --control-height: 3rem;
   --control-height-large: 3.25rem;
   --radius-control: 0.75rem;
