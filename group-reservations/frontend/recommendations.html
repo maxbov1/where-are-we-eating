@@ -6,7 +6,26 @@
     <title>Recommendation — Where Are We Eating?</title>
     <link rel="icon" type="image/png" href="assets/eatingfavicon.png" />
     <link rel="stylesheet" href="design-system.css" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="recommendations.css" />
   </head>
-  <body><main class="shell"><section class="screen recommendation-screen active"><div class="page-heading"><div><a class="back-link" id="back-overview" href="#">← Event overview</a><p class="eyebrow">Let the group decide</p><h1>Find the table.</h1></div></div><section class="recommendation-workspace"><div id="booking-handoff" class="booking-handoff hidden"></div><div id="recommendations" class="recommendations" aria-live="polite"><div class="agent-progress"><p class="response-summary">Reading the group’s preferences…</p><div class="progress-track"><span style="width:25%"></span></div></div></div></section></section></main><script src="config.js"></script><script src="recommendations.js"></script></body>
+  <body>
+    <div class="scroll-rail scroll-rail-left" aria-hidden="true"><span></span></div>
+    <div class="scroll-rail scroll-rail-right" aria-hidden="true"><span></span></div>
+    <main class="recommendation-page">
+      <header class="recommendation-header">
+        <a class="back-link" id="back-overview" href="#">← Event overview</a>
+        <p class="eyebrow">Where Are We Eating?</p>
+        <h1>Find the table.</h1>
+      </header>
+      <section class="conversation" id="recommendations" aria-live="polite">
+        <div class="conversation-status">
+          <p class="status-copy">Reading the group’s preferences…</p>
+          <span class="status-line" aria-hidden="true"></span>
+        </div>
+      </section>
+      <nav class="quick-actions" id="booking-handoff" aria-label="Suggested next steps"></nav>
+    </main>
+    <script src="config.js"></script>
+    <script src="recommendations.js?v=3"></script>
+  </body>
 </html>

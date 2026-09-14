@@ -13,6 +13,7 @@ if (!survey?.shareUrl) {
   document.querySelector('.share-grid').classList.add('hidden');
 } else {
   $('event-summary').textContent = `${survey.name} · ${survey.location}`;
+  $('continue-survey').href = survey.shareUrl;
   $('survey-link').value = survey.shareUrl;
   $('share-message').value = `🍽️ Help us pick ${survey.name} in ${survey.location}!\n\nVote here (30 seconds): ${survey.shareUrl}\n\nPick the dates and vibe that work for you — we’ll find the best table for everyone.`;
   if (window.QRCode) window.QRCode.toDataURL(survey.shareUrl, { width:180, margin:1, errorCorrectionLevel:'M' }).then((url) => { $('qr-code').src = url; });

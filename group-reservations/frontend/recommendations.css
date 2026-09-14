@@ -1,0 +1,50 @@
+:root { --rec-ink:var(--ink,#29231f); --rec-muted:var(--muted,#756a62); --rec-line:var(--line,#e5d8c5); --rec-green:var(--forest,#405238); --rec-red:var(--coral,#a84730); }
+html { min-width:320px; background:var(--paper,#fbf5ea); }
+body { min-width:320px; margin:0; background:radial-gradient(circle at 86% 0%,rgba(244,217,167,.45),transparent 27rem),var(--paper,#fbf5ea); color:var(--rec-ink); font-family:var(--font-ui); }
+.recommendation-page { width:min(100% - 96px,900px); min-height:100vh; margin:0 auto; padding:34px 0 120px; }
+.recommendation-header { display:grid; gap:18px; margin-bottom:82px; }
+.back-link { width:max-content; color:var(--rec-muted); font-size:14px; text-underline-offset:4px; }
+.back-link:hover { color:var(--rec-green); }
+.eyebrow { margin:0; color:var(--rec-red); font-size:11px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; }
+.recommendation-header h1 { margin:0; color:var(--rec-ink); font-family:var(--font-display); font-size:clamp(52px,8vw,88px); font-weight:600; letter-spacing:-.07em; line-height:.92; }
+.conversation,.quick-actions { width:min(100%,760px); margin-right:auto; margin-left:auto; }
+.conversation-status { display:grid; gap:18px; margin-bottom:48px; }
+.status-copy { margin:0; color:var(--rec-muted); font-size:15px; line-height:1.55; }
+.status-line { display:block; width:96px; height:2px; background:var(--rec-green); transition:width 500ms ease; }
+.agent-conversation { display:grid; gap:14px; margin-bottom:46px; padding-bottom:30px; border-bottom:1px solid var(--rec-line); }
+.agent-message { max-width:720px; margin:0; color:var(--rec-muted); font-size:14px; line-height:1.6; transition:opacity 500ms ease; }
+.agent-message-current,.agent-message-result { color:var(--rec-ink); }
+.recommendation-set { display:grid; gap:42px; }
+.recommendation-fit { margin:0; color:var(--rec-ink); font-family:var(--font-display); font-size:clamp(22px,3vw,30px); line-height:1.35; }
+.recommendation-card { display:grid; gap:13px; padding-top:28px; border-top:1px solid var(--rec-line); }
+.recommendation-primary { border-top:3px solid var(--rec-green); }
+.restaurant-preview { position:relative; width:100%; height:220px; overflow:hidden; margin:0 0 8px; background:rgba(229,216,197,.35); }
+.restaurant-preview iframe { display:block; width:100%; height:100%; border:0; background:#fff; pointer-events:none; }
+.restaurant-profile { display:grid; gap:13px; color:inherit; text-decoration:none; }
+.restaurant-profile:hover h2 { color:var(--rec-red); text-decoration:underline; text-underline-offset:5px; }
+.recommendation-facts { margin:0; color:var(--rec-green); font-size:13px; font-weight:600; line-height:1.55; }
+.card-kicker { margin:0; color:var(--rec-red); font-size:10px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+.recommendation-card h2 { margin:0; color:var(--rec-ink); font-family:var(--font-display); font-size:clamp(28px,4vw,40px); font-weight:600; letter-spacing:-.055em; line-height:1.02; }
+.recommendation-name { color:inherit; text-decoration:none; }
+.recommendation-name:hover { color:var(--rec-red); text-decoration:underline; text-underline-offset:5px; }
+.recommendation-description,.recommendation-tradeoff,.recommendation-availability { max-width:680px; margin:0; color:var(--rec-muted); font-size:14px; line-height:1.65; }
+.recommendation-tradeoff { color:var(--rec-ink); }
+.recommendation-traits { margin:0; color:var(--rec-green); font-size:13px; font-weight:600; line-height:1.55; }
+.recommendation-availability { padding-top:12px; border-top:1px solid var(--rec-line); }
+.recommendation-availability strong { color:var(--rec-ink); }
+.recommendation-action { width:max-content; color:var(--rec-green); font-size:14px; font-weight:600; text-underline-offset:4px; }
+.recommendation-unavailable { color:var(--rec-muted); font-size:13px; }
+.recommendation-blocker { display:grid; gap:6px; padding:4px 0 4px 18px; border-left:3px solid var(--rec-red); color:var(--rec-ink); font-size:14px; line-height:1.6; }
+.recommendation-blocker strong,.recommendation-blocker p { margin:0; }
+.recommendation-blocker p { color:var(--rec-muted); }
+.agent-answer { padding-top:28px; border-top:1px solid var(--rec-line); font-size:14px; line-height:1.6; }
+.agent-answer .card-kicker { margin-bottom:12px; }
+.quick-actions { display:flex; flex-wrap:wrap; gap:24px; margin-top:56px; padding-top:24px; border-top:1px solid var(--rec-line); }
+.quick-action { padding:0; border:0; background:transparent; color:var(--rec-green); cursor:pointer; font:600 14px/1.5 var(--font-ui); text-decoration:underline; text-underline-offset:4px; }
+.quick-action:hover { color:var(--rec-red); }
+.quick-action:disabled { color:var(--rec-muted); cursor:wait; }
+.scroll-rail { position:fixed; z-index:2; top:15vh; bottom:15vh; width:2px; pointer-events:none; background:rgba(229,216,197,.72); }
+.scroll-rail-left { left:20px; }
+.scroll-rail-right { right:20px; }
+.scroll-rail span { position:absolute; top:0; left:-1px; width:4px; min-height:16px; height:20%; border-radius:999px; background:var(--rec-green); transition:top 180ms ease,height 180ms ease; }
+@media (max-width:760px) { .recommendation-page { width:min(100% - 52px,760px); padding-top:26px; } .recommendation-header { margin-bottom:58px; } .recommendation-header h1 { font-size:clamp(48px,15vw,72px); } .recommendation-card h2 { font-size:31px; } .quick-actions { align-items:flex-start; flex-direction:column; gap:14px; margin-top:44px; } .scroll-rail { top:12vh; bottom:12vh; } .scroll-rail-left { left:8px; } .scroll-rail-right { right:8px; } }

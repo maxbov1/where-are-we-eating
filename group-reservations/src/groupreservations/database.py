@@ -63,7 +63,7 @@ def init_db() -> None:
           location TEXT NOT NULL, dates_json TEXT NOT NULL, times_json TEXT NOT NULL,
           availability_json TEXT NOT NULL DEFAULT '{}',
           questions_json TEXT NOT NULL DEFAULT '{}', location_place_id TEXT,
-          location_lat REAL, location_lng REAL, created_at TEXT NOT NULL,
+          location_lat REAL, location_lng REAL, is_demo INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
           expires_at TEXT
         );
         CREATE TABLE IF NOT EXISTS survey_questions (
@@ -105,6 +105,8 @@ def init_db() -> None:
         for column, definition in (("location_place_id", "TEXT"), ("location_lat", "REAL"), ("location_lng", "REAL")):
             if column not in survey_columns:
                 db.execute(f"ALTER TABLE surveys ADD COLUMN {column} {definition}")
+        if "is_demo" not in survey_columns:
+            db.execute("ALTER TABLE surveys ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
         if "expires_at" not in survey_columns:
             db.execute("ALTER TABLE surveys ADD COLUMN expires_at TEXT")
         response_columns = {row["name"] for row in db.execute("PRAGMA table_info(survey_responses)")}
@@ -170,7 +172,7 @@ def _normalize_availability(dates: list[str], times: list[str], availability: di
     return {date: list(times) for date in dates}
 
 
-def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None, availability: dict[str, list[str]] | None = None, expires_at: str | None = None) -> dict[str, Any]:
+def create_survey(organizer_id: str, event_name: str, location: str, dates: list[str], times: list[str], questions: dict[str, list[str]], location_place_id: str | None = None, location_lat: float | None = None, location_lng: float | None = None, availability: dict[str, list[str]] | None = None, expires_at: str | None = None, is_demo: bool = False) -> dict[str, Any]:
     init_db()
     availability = _normalize_availability(dates, times, availability)
     dates = list(availability)
@@ -178,9 +180,9 @@ def create_survey(organizer_id: str, event_name: str, location: str, dates: list
     created_at = _now()
     if not expires_at:
         expires_at = (datetime.fromisoformat(created_at) + DEFAULT_SURVEY_TTL).isoformat()
-    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": created_at, "expires_at": expires_at, "is_open": not _is_expired(expires_at)}
+    survey = {"id": secrets.token_urlsafe(12), "organizer_id": organizer_id, "public_token": secrets.token_urlsafe(18), "event_name": event_name, "location": location, "location_place_id": location_place_id, "location_lat": location_lat, "location_lng": location_lng, "is_demo": is_demo, "dates": dates, "times": times, "availability": availability, "questions": questions, "responses": [], "created_at": created_at, "expires_at": expires_at, "is_open": not _is_expired(expires_at)}
     with _connect() as db:
-        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,dates_json,times_json,availability_json,questions_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), created_at, expires_at))
+        db.execute("INSERT INTO surveys (id,organizer_id,public_token,event_name,location,location_place_id,location_lat,location_lng,is_demo,dates_json,times_json,availability_json,questions_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (survey["id"], organizer_id, survey["public_token"], event_name, location, location_place_id, location_lat, location_lng, int(is_demo), json.dumps(dates), json.dumps(times), json.dumps(availability), json.dumps(questions), created_at, expires_at))
         _insert_questions(db, survey["id"], questions)
     return survey
 
@@ -257,6 +259,7 @@ def get_survey(identifier: str) -> dict[str, Any] | None:
         survey["dates"] = list(survey["availability"]); survey["times"] = list(dict.fromkeys(time for slots in survey["availability"].values() for time in slots)); survey.pop("questions_json", None)
         survey["questions"] = {key: list(options) for key, (_, options) in _question_map(db, survey["id"]).items()}
         survey["responses"] = _responses(db, survey["id"])
+        survey["is_demo"] = bool(survey.get("is_demo"))
         survey["is_open"] = not _is_expired(survey.get("expires_at"))
         return survey
 
@@ -266,7 +269,7 @@ def list_surveys_for_organizer(organizer_id: str) -> list[dict[str, Any]]:
     init_db()
     with _connect() as db:
         rows = db.execute(
-            "SELECT id,public_token,event_name,location,created_at,expires_at "
+            "SELECT id,public_token,event_name,location,is_demo,created_at,expires_at "
             "FROM surveys WHERE organizer_id=? ORDER BY created_at DESC LIMIT 20",
             (organizer_id,),
         ).fetchall()
@@ -277,7 +280,7 @@ def list_surveys_for_organizer(organizer_id: str) -> list[dict[str, Any]]:
                 (row["id"],),
             ).fetchone()["count"]
             result.append({
-                "id": row["id"], "public_token": row["public_token"],
+                "id": row["id"], "public_token": row["public_token"], "is_demo": bool(row["is_demo"]),
                 "event_name": row["event_name"], "location": row["location"],
                 "created_at": row["created_at"], "expires_at": row["expires_at"],
                 "response_count": response_count,

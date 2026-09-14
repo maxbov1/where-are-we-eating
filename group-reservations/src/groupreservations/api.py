@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+import secrets
 import threading
 import time
 import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -219,7 +220,8 @@ def _is_context_overflow(error: BaseException) -> bool:
     return False
 
 
-def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: AgentState) -> None:
+def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: AgentState,
+                        mode: str = "full") -> None:
     stage_messages = {
         "restaurant_discovery": "Finding restaurants with Google Places",
         "restaurant_hydration": "Verifying restaurant details",
@@ -231,23 +233,34 @@ def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: Agen
 
     def on_phase(phase: str, _tool: str) -> None:
         now = time.time()
+        phase_message = stage_messages.get(phase, "Researching the best options")
         _set_recommendation_run(
             run_id, status="running", stage=phase,
-            message=stage_messages.get(phase, "Researching the best options"),
+            message=phase_message,
             last_tool=_tool,
             last_progress_at=now,
         )
         with _recommendation_runs_lock:
             record = _recommendation_runs.get(run_id)
-            if record and record.get("_last_action"):
-                record["active_action"] = {"id": record["_last_action"], "status": "running"}
+            if record:
+                messages = record.get("conversation")
+                already_added = isinstance(messages, list) and any(
+                    isinstance(message, dict)
+                    and message.get("kind") == "status"
+                    and message.get("content") == phase_message
+                    for message in messages
+                )
+                if not already_added:
+                    _append_conversation(record, _conversation_message("assistant", "status", phase_message))
+                if record.get("_last_action"):
+                    record["active_action"] = {"id": record["_last_action"], "status": "running"}
 
     on_phase("agent_reasoning", "start")
     with _recommendation_runs_lock:
         run_record = _recommendation_runs.get(run_id) or {}
         runtime_session_id = str(run_record.get("_runtime_session_id") or "")
     try:
-        answer = invoke_agentcore(prompt, user_id=organizer_id, session_id=runtime_session_id)
+        answer = invoke_agentcore(prompt, user_id=organizer_id, session_id=runtime_session_id, mode=mode)
     except Exception as exc:
         record = _set_recommendation_run(run_id, last_error_type=type(exc).__name__)
         logger.exception(
@@ -273,6 +286,25 @@ def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: Agen
             )
             return
         response = parse_recommendation_answer(answer)
+        if mode == "candidate_pass" and response.get("recommendation"):
+            recommendation = response["recommendation"]
+            recommendation["status"] = "partial"
+            for option in [recommendation.get("primary"), *recommendation.get("alternatives", [])]:
+                if isinstance(option, dict):
+                    option.setdefault("availability", {})["status"] = "unknown"
+                    option.setdefault("reservation", {})["status"] = "unknown"
+            actions = response.setdefault("actions", [])
+            availability_actions = [
+                {"id": "check_primary_availability", "label": "Check primary availability", "kind": "follow_up"},
+                {"id": "check_alternative_1", "label": "Check another option", "kind": "follow_up"},
+            ]
+            other_actions = [
+                action for action in actions
+                if isinstance(action, dict)
+                and action.get("id") not in {item["id"] for item in availability_actions}
+                and action.get("kind") == "follow_up"
+            ]
+            response["actions"] = (availability_actions + other_actions)[:3]
         record.update({
             "status": "complete",
             "stage": "recommendation_ready",
@@ -370,7 +402,8 @@ def _expire_recommendation(run_id: str) -> None:
         timer.start()
 
 
-def _enqueue_recommendation(prompt: str, organizer_id: str, state: AgentState) -> dict[str, object]:
+def _enqueue_recommendation(prompt: str, organizer_id: str, state: AgentState,
+                            mode: str = "full", base_prompt: str | None = None) -> dict[str, object]:
     run_id = f"recommendation-{uuid.uuid4().hex[:16]}"
     now = time.time()
     with _recommendation_runs_lock:
@@ -387,17 +420,18 @@ def _enqueue_recommendation(prompt: str, organizer_id: str, state: AgentState) -
             "last_progress_at": now,
             "watchdog_deadline_seconds": settings.recommendation_timeout_seconds,
             "_prompt": prompt,
-            "_base_prompt": prompt,
+            "_base_prompt": base_prompt or prompt,
             "_runtime_session_id": f"wawe-{uuid.uuid4()}",
             "_last_contract": None,
             "_state": state,
+            "_mode": mode,
             "conversation": [_conversation_message(
                 "assistant", "status",
                 "I’m reading the group’s preferences and researching the best options.",
             )],
             "active_action": None,
         }
-    _recommendation_executor.submit(_run_recommendation, run_id, prompt, organizer_id, state)
+    _recommendation_executor.submit(_run_recommendation, run_id, prompt, organizer_id, state, mode)
     timer = threading.Timer(settings.recommendation_timeout_seconds, _expire_recommendation, args=(run_id,))
     timer.daemon = True
     timer.start()
@@ -432,12 +466,56 @@ class RecommendationRequest(BaseModel):
 
 
 class RecommendationActionRequest(BaseModel):
-    action_id: Literal["refresh_research"]
+    action_id: Literal[
+        "refresh_research", "check_primary_availability",
+        "check_alternative_1", "check_alternative_2",
+    ]
 
 
 class UserRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     cognito_sub: str | None = None
+
+
+@app.post("/api/demo")
+def create_demo_event() -> dict[str, object]:
+    """Create an isolated, pre-filled four-person event for judge demos."""
+    suffix = secrets.token_hex(8)
+    organizer = create_user(f"judge-{suffix}@demo.whereareweeating.app")
+    questions = {
+        "cuisine": ["Italian", "Japanese", "Mexican", "Thai", "Indian", "Surprise me"],
+        "price": ["$0–20 per person", "$20–40 per person", "$40–60 per person"],
+        "vibe": ["Easygoing & casual", "Make it special", "Lively and social", "I'm along for the ride"],
+        "distance": ["1", "3", "5", "10", "15", "20", "30"],
+        "dietary": ["Vegetarian", "Vegan", "Gluten-free", "Nut-free", "No restrictions"],
+    }
+    today = datetime.now().date()
+    days_until_friday = (4 - today.weekday()) % 7 or 7
+    demo_dates = [(today + timedelta(days=days_until_friday + 7 * index)).isoformat() for index in range(3)]
+    first_date, second_date, third_date = demo_dates
+    availability = {
+        first_date: ["18:00", "19:00"], second_date: ["18:00", "19:00"],
+        third_date: ["18:00", "19:00"],
+    }
+    survey = create_survey(
+        organizer_id=organizer["id"], event_name="Friday dinner", location="San Clemente",
+        dates=list(availability), times=["18:00", "19:00"], availability=availability,
+        questions=questions, location_place_id="demo-san-clemente", location_lat=33.4274,
+        location_lng=-117.6126, expires_at="2099-12-31T23:59:59+00:00", is_demo=True,
+    )
+    responses = [
+        {"dates": [first_date, second_date], "times": ["18:00"], "availability": {first_date: ["18:00"], second_date: ["18:00"]}, "cuisine": ["Italian"], "price": ["$20–40 per person"], "vibe": ["Lively and social"], "distance": ["10"], "dietary": ["Vegetarian"]},
+        {"dates": [first_date, third_date], "times": ["18:00", "19:00"], "availability": {first_date: ["18:00"], third_date: ["19:00"]}, "cuisine": ["Italian", "Japanese"], "price": ["$20–40 per person"], "vibe": ["Make it special"], "distance": ["15"], "dietary": ["No restrictions"]},
+        {"dates": [first_date, second_date], "times": ["19:00"], "availability": {first_date: ["19:00"], second_date: ["19:00"]}, "cuisine": ["Italian"], "price": ["$20–40 per person"], "vibe": ["Lively and social"], "distance": ["5"], "dietary": ["Gluten-free"]},
+        {"dates": [second_date, third_date], "times": ["18:00"], "availability": {second_date: ["18:00"], third_date: ["18:00"]}, "cuisine": ["Mexican"], "price": ["$40–60 per person"], "vibe": ["Easygoing & casual"], "distance": ["10"], "dietary": ["No restrictions"]},
+    ]
+    for index, answer in enumerate(responses):
+        append_response(
+            survey["public_token"], guest_token=f"demo-{suffix}-{index}", dates=answer["dates"],
+            times=answer["times"], availability=answer["availability"],
+            answers={key: answer[key] for key in ("cuisine", "price", "vibe", "distance", "dietary")},
+        )
+    return {"organizer_id": organizer["id"], "survey_id": survey["id"], "public_token": survey["public_token"], "demo": True}
 
 
 class SurveyRequest(BaseModel):
@@ -627,7 +705,7 @@ def survey(public_token: str) -> dict[str, object]:
     record = get_survey(public_token)
     if not record:
         raise HTTPException(status_code=404, detail="Survey not found")
-    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "location_lat", "location_lng", "dates", "times", "availability", "questions", "expires_at", "is_open")}
+    return {key: record[key] for key in ("id", "public_token", "event_name", "location", "location_lat", "location_lng", "dates", "times", "availability", "questions", "expires_at", "is_open", "is_demo")}
 
 
 @app.get("/api/organizers/{organizer_id}/surveys")
@@ -763,6 +841,11 @@ before or after it. Use exactly this shape:
   "group_fit": "1-2 concise sentences explaining why the group choices led to the primary",
   "primary": {{
     "name": "restaurant name",
+    "rating": 4.6,
+    "review_count": 1200,
+    "price_level": "$$",
+    "address": "street address or null",
+    "hours_summary": "hours relevant to the selected day or null",
     "description": "one factual sentence describing the place from verified Google Places evidence",
     "tradeoff": "one sentence about the fit or tradeoff",
     "traits": ["cuisine", "vibe", "price or dietary fact when verified"],
@@ -846,7 +929,11 @@ def recommendations(
         survey_id=payload.survey_id,
         group_location=payload.location,
     )
-    return _enqueue_recommendation(_agent_prompt(payload), organizer_id, state)
+    base_prompt = _agent_prompt(payload)
+    return _enqueue_recommendation(
+        base_prompt + "\n\nThis is the initial fast candidate pass. Do not perform browser or reservation research yet.",
+        organizer_id, state, mode="candidate_pass", base_prompt=base_prompt,
+    )
 
 
 @app.get("/api/recommendations/{run_id}")
@@ -887,10 +974,25 @@ def recommendation_action(
             raise HTTPException(status_code=409, detail="Recommendation context is no longer available")
         previous_contract = record.get("_last_contract")
         prior_context = json.dumps(previous_contract, ensure_ascii=False) if previous_contract else "none"
+        recommendation = previous_contract if isinstance(previous_contract, dict) else {}
+        options = [recommendation.get("primary"), *(recommendation.get("alternatives") or [])]
+        selected_index = {
+            "check_primary_availability": 0,
+            "check_alternative_1": 1,
+            "check_alternative_2": 2,
+        }.get(payload.action_id, 0)
+        selected = options[selected_index] if selected_index < len(options) and isinstance(options[selected_index], dict) else {}
+        selected_name = str(selected.get("name") or "the selected restaurant")
+        selected_url = str(selected.get("restaurant_url") or "")
         prompt = (
             f"{prompt}\n\nThe organizer selected the follow-up action "
             f"{payload.action_id}. Continue from the existing research context; "
             "do not discard verified evidence or claim that a reservation was made.\n"
+            f"FOCUSED TARGET: Check availability and reservation evidence only for "
+            f"{selected_name}. The exact Google Places website URL is {selected_url or 'not available'}; "
+            "do not search for replacement restaurants or inspect the other options. "
+            "Return the same three-option contract, preserving the other options unchanged, "
+            "and update only the focused target's availability, reservation, blocker, and next steps.\n"
             f"Previous validated recommendation context: {prior_context}"
         )
         record.update({
@@ -904,15 +1006,16 @@ def recommendation_action(
             "_last_action": payload.action_id,
             "active_action": {"id": payload.action_id, "status": "queued"},
             "last_progress_at": time.time(),
+            "_mode": "availability_pass",
         })
         _append_conversation(record, _conversation_message(
-            "user", "action", "Continue the research", action_id=payload.action_id,
+            "user", "action", f"Check availability for {selected_name}", action_id=payload.action_id,
         ))
         _append_conversation(record, _conversation_message(
-            "assistant", "status", "I’m continuing from the existing research context.", action_id=payload.action_id,
+            "assistant", "status", f"I’m checking {selected_name} now.", action_id=payload.action_id,
         ))
         public = _public_recommendation_run(record)
-    _recommendation_executor.submit(_run_recommendation, run_id, prompt, organizer_id, state)
+    _recommendation_executor.submit(_run_recommendation, run_id, prompt, organizer_id, state, "availability_pass")
     timer = threading.Timer(settings.recommendation_timeout_seconds, _expire_recommendation, args=(run_id,))
     timer.daemon = True
     timer.start()

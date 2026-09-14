@@ -46,6 +46,11 @@ class RestaurantRecommendation(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str = Field(min_length=1, max_length=160)
     restaurant_url: str | None = None
+    rating: float | None = Field(default=None, ge=0, le=5)
+    review_count: int | None = Field(default=None, ge=0)
+    price_level: str | None = Field(default=None, max_length=80)
+    address: str | None = Field(default=None, max_length=240)
+    hours_summary: str | None = Field(default=None, max_length=240)
     description: str = Field(default="", max_length=500)
     traits: list[str] = Field(default_factory=list, max_length=6)
     tradeoff: str = Field(default="", max_length=500)
@@ -57,7 +62,10 @@ class SuggestedAction(BaseModel):
     """Allowlisted, non-destructive action suggested by the agent."""
 
     model_config = ConfigDict(extra="ignore")
-    id: Literal["show_alternatives", "adjust_preferences", "refresh_research"]
+    id: Literal[
+        "show_alternatives", "adjust_preferences", "refresh_research",
+        "check_primary_availability", "check_alternative_1", "check_alternative_2",
+    ]
     label: str = Field(min_length=1, max_length=120)
     kind: Literal["follow_up"] = "follow_up"
 
@@ -66,7 +74,7 @@ class RecommendationContract(BaseModel):
     """The model-to-UI contract for one recommendation result."""
 
     model_config = ConfigDict(extra="ignore")
-    status: Literal["ready", "blocked"] = "ready"
+    status: Literal["partial", "ready", "blocked"] = "ready"
     group_fit: str = Field(default="", max_length=700)
     primary: RestaurantRecommendation
     alternatives: list[RestaurantRecommendation] = Field(default_factory=list, max_length=2)
@@ -137,7 +145,10 @@ def _structured_recommendation(text: str) -> dict[str, Any] | None:
             }
             for item in raw_actions
             if isinstance(item, dict)
-            and item.get("id") in {"show_alternatives", "adjust_preferences", "refresh_research"}
+            and item.get("id") in {
+                "show_alternatives", "adjust_preferences", "refresh_research",
+                "check_primary_availability", "check_alternative_1", "check_alternative_2",
+            }
         ][:3]
     for option in [payload["primary"], *payload.get("alternatives", [])]:
         if not isinstance(option, dict):
@@ -244,7 +255,15 @@ def parse_recommendation_answer(answer: str) -> dict[str, Any]:
 
     # These are UI intents, not claims that an operation has happened.  The
     # organizer can use them to start the next request in the chat/agent UI.
-    if not recommendation or recommendation.get("status") != "blocked":
+    if recommendation and recommendation.get("status") == "partial":
+        existing_ids = {action["id"] for action in actions}
+        actions.extend([
+            action for action in [
+                {"id": "check_primary_availability", "label": "Check primary availability", "kind": "follow_up"},
+                {"id": "check_alternative_1", "label": "Check another option", "kind": "follow_up"},
+            ] if action["id"] not in existing_ids
+        ])
+    elif not recommendation or recommendation.get("status") != "blocked":
         existing_ids = {action["id"] for action in actions}
         actions.extend([
             action for action in [

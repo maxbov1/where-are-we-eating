@@ -33,12 +33,12 @@ _add_source_path()
 from groupreservations.agent import run  # noqa: E402
 
 
-def _request_values(payload: Any) -> tuple[str | None, str]:
+def _request_values(payload: Any) -> tuple[str | None, str, str]:
     """Extract the AgentCore prompt and organizer identity from JSON input."""
     if isinstance(payload, str):
-        return payload, "agentcore-organizer"
+        return payload, "agentcore-organizer", "full"
     if not isinstance(payload, dict):
-        return None, "agentcore-organizer"
+        return None, "agentcore-organizer", "full"
 
     prompt = payload.get("prompt")
     if prompt is None and isinstance(payload.get("input"), dict):
@@ -46,7 +46,7 @@ def _request_values(payload: Any) -> tuple[str | None, str]:
     user_id = payload.get("user_id") or payload.get("organizer_id")
     return (prompt if isinstance(prompt, str) else None), str(
         user_id or "agentcore-organizer"
-    )
+    ), str(payload.get("mode") or "full")
 
 
 class AgentCoreHandler(BaseHTTPRequestHandler):
@@ -81,7 +81,7 @@ class AgentCoreHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
             return
 
-        prompt, user_id = _request_values(payload)
+        prompt, user_id, mode = _request_values(payload)
         if not prompt or not prompt.strip():
             self._write_json(
                 HTTPStatus.BAD_REQUEST,
@@ -90,7 +90,7 @@ class AgentCoreHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            result = run(prompt.strip(), user_id=user_id)
+            result = run(prompt.strip(), user_id=user_id, mode=mode)
         except Exception as exc:  # AgentCore should receive a useful 500 response.
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,

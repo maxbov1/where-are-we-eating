@@ -1,5 +1,6 @@
 const API_BASE = window.WAE_API_BASE || 'http://127.0.0.1:8000';
 const surveyId = new URLSearchParams(location.search).get('survey');
+let isDemo = new URLSearchParams(location.search).get('demo') === '1';
 const organizerId = localStorage.getItem('organizerId');
 const $ = (id) => document.getElementById(id);
 const escapeHtml = (value) => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
@@ -50,11 +51,13 @@ function renderOverview(aggregate) {
 
 async function load() {
   if (!surveyId || !organizerId) { $('overview-grid').innerHTML = '<p class="response-summary">This event link is missing or your organizer session has expired.</p>'; return; }
+  if (isDemo) $('demo-notice').classList.remove('hidden');
   try {
     const [eventResponse, aggregateResponse] = await Promise.all([fetch(`${API_BASE}/api/surveys/${encodeURIComponent(surveyId)}`),fetch(`${API_BASE}/api/surveys/${encodeURIComponent(surveyId)}/aggregate`)]);
     const event = await eventResponse.json(), aggregate = await aggregateResponse.json();
     if (!eventResponse.ok || !aggregateResponse.ok) throw new Error(event.detail || aggregate.detail || 'Could not load this event');
-    $('overview-title').textContent = event.event_name; $('overview-location').textContent = event.location; $('find-recommendation').href = `recommendations.html?survey=${encodeURIComponent(surveyId)}`; renderOverview(aggregate);
+    isDemo = event.is_demo === true;
+    $('demo-notice').classList.toggle('hidden', !isDemo); $('overview-title').textContent = event.event_name; $('overview-location').textContent = event.location; $('find-recommendation').href = `recommendations.html?survey=${encodeURIComponent(surveyId)}`; renderOverview(aggregate);
   } catch (error) { $('overview-grid').innerHTML = `<p class="response-summary">${escapeHtml(error.message || 'Could not load this event.')}</p>`; }
 }
 load();

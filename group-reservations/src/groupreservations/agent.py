@@ -186,7 +186,8 @@ def create_state_tool(state: AgentState):
 
 def create_agent(browser_tools: list[object] | None = None,
                  evidence_tool=None, state_tool=None,
-                 trace: AgentTrace | None = None) -> Agent:
+                 trace: AgentTrace | None = None,
+                 system_prompt: str = SYSTEM_PROMPT) -> Agent:
     """Build the agent from Google Places and local browser tools."""
     model = BedrockModel(
         model_id=settings.model_id,
@@ -195,7 +196,7 @@ def create_agent(browser_tools: list[object] | None = None,
     )
     agent = Agent(
         model=model,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         callback_handler=None,
         # Context overflow must fail fast into the API's seeded fallback. The
         # default manager recursively retries overflow after trimming, which
@@ -222,7 +223,7 @@ def configuration_status() -> dict[str, str | bool]:
 
 
 def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | None = None,
-        progress_callback=None) -> str:
+        progress_callback=None, mode: str = "full") -> str:
     """Run one organizer prompt with browser-backed reservation handoffs."""
     logger.info("agent stage=run_start user_id=%s prompt_chars=%d", user_id, len(prompt))
     estimated_prompt_tokens = (len(SYSTEM_PROMPT) + len(prompt) + 3) // 4
@@ -232,7 +233,34 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
         len(SYSTEM_PROMPT), len(prompt), estimated_prompt_tokens,
     )
     state = state or AgentState()
-    browser, browser_tools = create_reservation_browser_tools(user_id, state)
+    candidate_pass = mode == "candidate_pass"
+    availability_pass = mode == "availability_pass"
+    browser, browser_tools = (None, []) if candidate_pass else create_reservation_browser_tools(user_id, state)
+    run_system_prompt = SYSTEM_PROMPT
+    if candidate_pass:
+        run_system_prompt += """
+
+INITIAL CANDIDATE PASS
+This is the fast first pass. Use only Google Places discovery and details tools.
+Do not call any reservation browser tool, do not inspect booking websites, and
+do not attempt availability verification. Return exactly three hydrated Google
+Places candidates when available, with availability and reservation status set
+to unknown unless Google Places provides an explicit URL. Return status
+\"partial\" and include these actions: check_primary_availability,
+check_alternative_1, and check_alternative_2. The API will run browser research
+only after the organizer selects an availability action.
+"""
+    elif availability_pass:
+        run_system_prompt += """
+
+AVAILABILITY FOLLOW-UP PASS
+This is a focused follow-up. Use the previous validated recommendation context
+from the organizer prompt and inspect only the restaurant named by the selected
+availability action. Do not research the other restaurants, do not require
+three completed handoffs, and stop at the safe organizer handoff boundary.
+Return the same three-option contract, preserving the existing alternatives,
+with updated evidence only for the selected restaurant.
+"""
     trace = AgentTrace(user_id, on_phase=progress_callback)
     agent_error: Exception | None = None
     try:
@@ -242,7 +270,8 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
             bool(os.getenv("GROUP_RESERVATIONS_TRACE") or os.getenv("GROUP_RESERVATIONS_DEBUG")),
         )
         result = str(create_agent(
-            browser_tools, create_evidence_tool(user_id), create_state_tool(state), trace
+            browser_tools, create_evidence_tool(user_id), create_state_tool(state), trace,
+            system_prompt=run_system_prompt,
         )(prompt))
         stats = trace.token_stats
         # The model provider resends conversation history on each turn, so
@@ -292,7 +321,7 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
             ], separators=(",", ":"), default=str),
         )
         required_handoffs = 3
-        if len(state.reservation_handoffs) < required_handoffs or len(resolved_handoffs) < required_handoffs:
+        if mode == "full" and (len(state.reservation_handoffs) < required_handoffs or len(resolved_handoffs) < required_handoffs):
             missing = [handoff.get("restaurant_name", place_id)
                        for place_id, handoff in state.reservation_handoffs.items()
                        if not (handoff.get("availability_verified")
@@ -332,7 +361,7 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
         logger.info(
             "agent stage=handoff_gate_complete resolved=%d required=%d blocked=%s",
             len(resolved_handoffs), required_handoffs,
-            len(resolved_handoffs) < required_handoffs,
+            mode == "full" and len(resolved_handoffs) < required_handoffs,
         )
         logger.info("agent stage=agent_complete result_chars=%d", len(result))
         return result
@@ -358,7 +387,8 @@ def run(prompt: str, *, user_id: str = "local-organizer", state: AgentState | No
             f"{type(agent_error).__name__}: {agent_error}"[:300] if agent_error else None,
         )
         logger.info("agent stage=run_cleanup")
-        browser.close()
+        if browser is not None:
+            browser.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -48,6 +48,7 @@ h1,h2,p { margin-top:0; } h1,h2 { letter-spacing:-.055em; } h1 { font-family:var
 .recommendation-page-mode .results-heading { display:flex; }
 .recommendation-page-mode .recommendation-back { display:inline-flex; margin-bottom:18px; }
 .recommendation-screen { max-width:1360px; }
+.demo-notice { max-width:900px; margin:0 0 22px; padding-left:16px; border-left:3px solid var(--saffron); color:var(--muted); font-size:13px; line-height:1.6; }
 .recommendation-workspace { margin-top:22px; }
 .recommendation-set { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); column-gap:48px; row-gap:42px; }
 .recommendation-fit { grid-column:1/-1; margin:0 0 2px; color:var(--ink); font-family:var(--font-display); font-size:21px; line-height:1.45; }
@@ -124,3 +125,38 @@ h1,h2,p { margin-top:0; } h1,h2 { letter-spacing:-.055em; } h1 { font-family:var
 
 /* Shared controls stay on the same accessible sizing scale across the app. */
 .button { min-height:var(--control-height); border-radius:var(--radius-control); gap:var(--space-5); padding:var(--space-3) var(--space-5); }
+
+/* Recommendation view: one continuous assistant thread, not a dashboard. */
+.agent-page { width:min(100%, 1040px); min-height:100vh; margin:auto; padding:42px 34px 104px; }
+.agent-header { display:grid; gap:18px; margin-bottom:64px; }
+.agent-header .back-link { width:max-content; }
+.agent-header .eyebrow { margin:0; }
+.agent-header h1 { margin:0; font-size:clamp(48px, 8vw, 76px); }
+.agent-thread { display:grid; gap:0; width:min(100%, 840px); margin:0 auto; }
+.agent-thread .agent-progress { width:100%; }
+.agent-progress { padding:0; border:0; background:transparent; }
+.agent-progress .response-summary { margin:0 0 14px; font-size:15px; }
+.progress-track { width:100%; max-width:420px; height:3px; border-radius:0; background:var(--line); }
+.progress-track span { border-radius:0; background:var(--forest); }
+.agent-conversation { display:grid; gap:14px; width:100%; margin:0 0 42px; padding-bottom:30px; border-bottom:1px solid var(--line); font-family:var(--font-ui); }
+.agent-message { max-width:100%; margin:0; color:var(--muted); font-family:var(--font-ui); font-size:14px; font-weight:400; line-height:1.55; overflow-wrap:anywhere; }
+.agent-message-history,.agent-message-current { transition:opacity 500ms ease; }
+.agent-message-result { color:var(--ink); transition:opacity 500ms ease; }
+.recommendation-set { display:grid; grid-template-columns:1fr; gap:38px; width:100%; }
+.recommendation-fit { margin:0; color:var(--ink); font-family:var(--font-display); font-size:22px; line-height:1.45; }
+.recommendation-card { display:flex; flex-direction:column; gap:10px; width:100%; padding:26px 0 0; border-top:1px solid var(--line); background:transparent; border-radius:0; }
+.recommendation-primary { border-top:3px solid var(--forest); background:transparent; }
+.recommendation-card h3 { font-size:25px; }
+.recommendation-card .card-kicker { margin-bottom:2px; }
+.recommendation-description,.recommendation-tradeoff,.recommendation-availability { font-size:14px; line-height:1.6; }
+.recommendation-availability { padding-top:12px; }
+.recommendation-blocker { padding:4px 0 4px 18px; border-radius:0; background:transparent; }
+.quick-actions { display:flex; flex-wrap:wrap; gap:20px; width:min(100%, 840px); margin:54px auto 0; padding-top:24px; border-top:1px solid var(--line); }
+.quick-action { border:0; padding:0; background:transparent; color:var(--forest); cursor:pointer; font:600 14px/1.5 var(--font-ui); text-decoration:underline; text-underline-offset:4px; }
+.quick-action:hover { color:var(--coral); }
+.page-scrollbar { position:fixed; z-index:5; top:18vh; bottom:18vh; width:2px; pointer-events:none; background:rgba(229,216,197,.7); }
+.page-scrollbar-left { left:18px; }
+.page-scrollbar-right { right:18px; }
+.page-scrollbar span { position:absolute; top:0; left:-1px; width:4px; height:22%; border-radius:99px; background:var(--forest); transition:top 180ms ease; }
+@media (max-width:760px) { .page-scrollbar { top:12vh; bottom:12vh; } .page-scrollbar-left { left:8px; } .page-scrollbar-right { right:8px; } }
+@media (max-width:760px) { .agent-page { padding:32px 18px 72px; } .agent-header { margin-bottom:46px; } .recommendation-set { grid-template-columns:1fr; gap:34px; } .recommendation-card,.recommendation-primary,.recommendation-fit { grid-column:1/-1; } .quick-actions { align-items:flex-start; flex-direction:column; gap:14px; margin-top:42px; } }
