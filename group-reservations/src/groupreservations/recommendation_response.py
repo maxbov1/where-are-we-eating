@@ -87,8 +87,10 @@ def _safe_url(value: str) -> str | None:
 def _structured_recommendation(text: str) -> dict[str, Any] | None:
     """Validate the small JSON envelope used by the recommendation UI."""
     candidate = text.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", candidate, re.I | re.S)
-    candidates = [fenced.group(1)] if fenced else []
+    # Match the whole fenced body.  A non-greedy brace match truncates valid
+    # contracts at the first nested object close brace.
+    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, re.I | re.S)
+    candidates = [fenced.group(1).strip()] if fenced else []
     candidates.append(candidate)
     if not fenced:
         start, end = candidate.find("{"), candidate.rfind("}")
@@ -107,11 +109,51 @@ def _structured_recommendation(text: str) -> dict[str, Any] | None:
         return None
     # Accept the previous draft shape during the rollout.  The public result
     # is still emitted only in the new nested contract shape.
+    # Models sometimes add a harmless handoff action, use a terminal status
+    # such as "complete", or return null values in the blocker.  Normalize
+    # those boundary variations before validation so one extra model field
+    # cannot erase an otherwise useful recommendation.
+    if payload.get("status") in {"complete", "success"}:
+        payload["status"] = "ready"
+    elif payload.get("status") in {"error", "failed", "failure"}:
+        payload["status"] = "blocked"
+    if isinstance(payload.get("alternatives"), list):
+        payload["alternatives"] = [item for item in payload["alternatives"] if isinstance(item, dict)][:2]
+    if isinstance(payload.get("next_steps"), list):
+        payload["next_steps"] = [str(item) for item in payload["next_steps"][:3]]
+    if isinstance(payload.get("blocker"), dict):
+        payload["blocker"] = {
+            str(key): str(value)
+            for key, value in payload["blocker"].items()
+            if value is not None
+        }
+    raw_actions = payload.get("actions")
+    if isinstance(raw_actions, list):
+        payload["actions"] = [
+            {
+                "id": item["id"],
+                "label": str(item.get("label") or item["id"]),
+                "kind": "follow_up",
+            }
+            for item in raw_actions
+            if isinstance(item, dict)
+            and item.get("id") in {"show_alternatives", "adjust_preferences", "refresh_research"}
+        ][:3]
     for option in [payload["primary"], *payload.get("alternatives", [])]:
         if not isinstance(option, dict):
             continue
+        if isinstance(option.get("traits"), list):
+            option["traits"] = [str(item) for item in option["traits"][:6]]
         if isinstance(option.get("availability"), str):
             option["availability"] = {"summary": option["availability"]}
+        if isinstance(option.get("availability"), dict):
+            evidence = option["availability"]
+            if evidence.get("status") not in {"verified", "unknown", "unavailable"}:
+                evidence["status"] = "unknown"
+        if isinstance(option.get("reservation"), dict):
+            reservation = option["reservation"]
+            if reservation.get("status") not in {"available", "unknown", "unavailable"}:
+                reservation["status"] = "unknown"
         if "reservation" not in option and (option.get("booking_url") or option.get("booking_label")):
             option["reservation"] = {
                 "url": option.get("booking_url"),

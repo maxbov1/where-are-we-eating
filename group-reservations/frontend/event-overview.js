@@ -25,18 +25,27 @@ function distanceChart(item) {
   return `<section class="overview-block overview-distance"><div class="visual-heading"><h3>Travel distance</h3></div><div class="distance-visual">${votes.map(([value,count]) => `<div class="distance-row"><div><span>Up to ${escapeHtml(value)} mi</span><b>${count}</b></div><div class="visual-track"><i style="width:${Math.round((Number(count) / max) * 100)}%"></i></div></div>`).join('')}</div></section>`;
 }
 
-function scheduleChart(pairs) {
+function scheduleChart(schedule) {
+  const dates = Object.keys(schedule.times_by_date || {});
+  const pairs = schedule.pair_votes || [];
+  const times = [...new Set(pairs.map((pair) => pair.time))].sort();
+  const counts = new Map(pairs.map((pair) => [`${pair.date}|${pair.time}`, Number(pair.votes) || 0]));
   const max = Math.max(...pairs.map((pair) => Number(pair.votes) || 0), 1);
-  return pairs.length ? `<section class="overview-block overview-schedule"><div class="visual-heading"><h3>When</h3></div><div class="schedule-visual">${pairs.map((pair,index) => `<div class="schedule-visual-row"><div class="visual-label"><span>${index ? 'Alternative' : 'Leading'} · ${prettyDate(pair.date)} at ${prettyTime(pair.time)}</span><b>${pair.votes}</b></div><div class="visual-track"><i style="width:${Math.round(((Number(pair.votes)||0)/max)*100)}%"></i></div></div>`).join('')}</div></section>` : '';
+  if (!dates.length || !times.length) return '';
+  const header = `<div class="heatmap-corner"></div>${times.map((time) => `<div class="heatmap-time">${prettyTime(time)}</div>`).join('')}`;
+  const rows = dates.map((date) => `<div class="heatmap-date">${prettyDate(date)}</div>${times.map((time) => { const allowed = (schedule.times_by_date[date] || []).includes(time); const votes = counts.get(`${date}|${time}`) || 0; if (!allowed) return '<div class="heatmap-cell heatmap-cell-empty" aria-hidden="true"></div>'; const intensity = 0.12 + (votes / max) * 0.78; return `<div class="heatmap-cell" data-heatmap-cell style="--heat-opacity:${intensity};" aria-label="${escapeHtml(prettyDate(date))} at ${escapeHtml(prettyTime(time))}: ${votes} vote${votes === 1 ? '' : 's'}"><strong>${votes || '—'}</strong></div>`; }).join('')}`).join('');
+  const html = `<section class="overview-block overview-schedule"><div class="visual-heading"><h3>When</h3></div><div class="schedule-heatmap" style="--heatmap-columns:${times.length}">${header}${rows}</div></section>`;
+  requestAnimationFrame(() => document.querySelectorAll('[data-heatmap-cell]').forEach((cell, index) => { if (window.motionAnimate) window.motionAnimate(cell, { opacity:[0,1], transform:['scale(.92)','scale(1)'] }, { duration:.35, delay:index * .04 }); else cell.style.opacity = 1; }));
+  return html;
 }
 
 function renderOverview(aggregate) {
-  const schedule = aggregate.report?.schedule || {}, preferences = aggregate.report?.preferences || {}, pairs = (schedule.recommended_pairs || []).slice(0,3), responseCount = aggregate.response_count || 0;
+  const schedule = aggregate.report?.schedule || {}, preferences = aggregate.report?.preferences || {}, responseCount = aggregate.response_count || 0;
   const categories = Object.entries(preferences).filter(([key,item]) => key !== 'distance' && item?.votes && Object.keys(item.votes).length).map(([key,item]) => pieChart(key,item)).join('');
   const distance = preferences.distance?.votes ? distanceChart(preferences.distance) : '';
   const dietaryVotes = Object.entries(preferences.dietary?.votes || {}).filter(([value,count]) => value.toLowerCase() !== 'no restrictions' && Number(count) > 0);
   const dietary = dietaryVotes.length ? `<section class="overview-constraint"><h3>Dietary needs</h3><div class="constraint-list">${dietaryVotes.map(([value,count]) => `<span>${Number(count) === 1 ? '1 person' : `${count} people`} requested ${escapeHtml(dietaryLabels[value.toLowerCase()] || value.toLowerCase())}</span>`).join('')}</div></section>` : '';
-  $('overview-grid').innerHTML = `<p class="overview-intro">${responseCount ? `${responseCount} person${responseCount === 1 ? '' : 's'} weighed in. Here’s where the group’s choices are converging.` : 'Waiting for the first response.'}</p>${scheduleChart(pairs)}${distance}${categories}${dietary}`;
+  $('overview-grid').innerHTML = `<p class="overview-intro">${responseCount ? `${responseCount} person${responseCount === 1 ? '' : 's'} weighed in. Here’s where the group’s choices are converging.` : 'Waiting for the first response.'}</p>${scheduleChart(schedule)}${distance}${categories}${dietary}`;
 }
 
 async function load() {

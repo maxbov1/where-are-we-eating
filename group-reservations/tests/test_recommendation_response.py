@@ -81,3 +81,24 @@ def test_parser_extracts_fenced_contract_without_exposing_model_prose():
     assert result["recommendation"]["status"] == "blocked"
     assert result["recommendation"]["primary"]["restaurant_url"] == "https://example.com/sol"
     assert result["recommendation"]["blocker"]["title"] == "I can't complete further than this"
+
+
+def test_parser_keeps_recommendation_when_model_adds_non_contract_action_fields():
+    result = parse_recommendation_answer(json.dumps({
+        "status": "complete",
+        "group_fit": "The group prefers casual dining nearby.",
+        "primary": {
+            "name": "Pronto",
+            "description": "Fresh pasta in a casual dining room.",
+            "traits": ["Italian", "Casual"],
+            "availability": {"status": "not_checked", "summary": "The restaurant is open."},
+            "reservation": {"status": "not_verified", "url": None},
+        },
+        "alternatives": [],
+        "blocker": {"title": "Research stopped", "next_step": None},
+        "actions": [{"id": "booking_handoff_1", "kind": "handoff", "label": "Book Pronto"}],
+    }))
+
+    assert result["recommendation"]["status"] == "ready"
+    assert result["recommendation"]["primary"]["availability"]["status"] == "unknown"
+    assert result["recommendation"]["primary"]["reservation"]["status"] == "unavailable"

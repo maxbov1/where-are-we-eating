@@ -397,7 +397,7 @@ def aggregate_survey(identifier: str) -> dict[str, Any] | None:
         "event": {"name": survey["event_name"], "location": survey["location"]},
         "response_count": len(survey["responses"]),
         "active_questions": list(survey["questions"]),
-        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "times_by_date": survey["availability"], "pair_leaders": pair_leaders, "recommended_pairs": recommended_pairs, "date_consensus": consensus("dates"), "time_consensus": consensus("times"), "pair_consensus": pair_consensus},
+        "schedule": {"date_leaders": leaders("dates"), "time_leaders": leaders("times"), "times_by_date": survey["availability"], "pair_votes": pair_counts, "pair_leaders": pair_leaders, "recommended_pairs": recommended_pairs, "date_consensus": consensus("dates"), "time_consensus": consensus("times"), "pair_consensus": pair_consensus},
         "preferences": {key: {"leaders": leaders(key), "consensus": consensus(key), "votes": values} for key, values in summary.items() if key not in {"dates", "times"}},
         "constraints": {"dietary_requirements": dietary_requirements},
         "preference_summary": summary,

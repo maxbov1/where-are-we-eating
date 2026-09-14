@@ -110,6 +110,7 @@ def test_aggregate_exposes_all_tied_date_time_pairs(tmp_path):
         {"date": "2026-09-04", "time": "18:00", "votes": 1},
         {"date": "2026-09-11", "time": "19:00", "votes": 1},
     ]
+    assert len(schedule["pair_votes"]) == 4
 
 
 def test_aggregate_exposes_dietary_requirements_as_constraints(tmp_path):
