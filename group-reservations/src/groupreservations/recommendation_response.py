@@ -46,6 +46,8 @@ class RestaurantRecommendation(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str = Field(min_length=1, max_length=160)
     restaurant_url: str | None = None
+    website_url: str | None = None
+    google_maps_url: str | None = None
     rating: float | None = Field(default=None, ge=0, le=5)
     review_count: int | None = Field(default=None, ge=0)
     price_level: str | None = Field(default=None, max_length=80)
@@ -90,6 +92,17 @@ def _safe_url(value: str) -> str | None:
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         return None
     return candidate
+
+
+def _safe_website_url(value: str) -> str | None:
+    """Accept restaurant websites, never Google Maps listing URLs."""
+    url = _safe_url(value)
+    if not url:
+        return None
+    host = urlsplit(url).netloc.casefold().removeprefix("www.")
+    if host == "google.com" or host.endswith(".google.com") or host.endswith(".googleusercontent.com"):
+        return None
+    return url
 
 
 def _structured_recommendation(text: str) -> dict[str, Any] | None:
@@ -179,7 +192,11 @@ def _structured_recommendation(text: str) -> dict[str, Any] | None:
     result = contract.model_dump()
     options = [result["primary"], *result["alternatives"]]
     for option in options:
-        option["restaurant_url"] = _safe_url(option.get("restaurant_url") or "")
+        website_url = _safe_website_url(option.get("website_url") or "")
+        legacy_url = _safe_website_url(option.get("restaurant_url") or "")
+        option["website_url"] = website_url or legacy_url
+        option["restaurant_url"] = option["website_url"]
+        option["google_maps_url"] = _safe_url(option.get("google_maps_url") or "")
         evidence = option["availability"]
         evidence["source_url"] = _safe_url(evidence.get("source_url") or "")
         reservation = option["reservation"]
@@ -261,14 +278,6 @@ def parse_recommendation_answer(answer: str) -> dict[str, Any]:
             action for action in [
                 {"id": "check_primary_availability", "label": "Check primary availability", "kind": "follow_up"},
                 {"id": "check_alternative_1", "label": "Check another option", "kind": "follow_up"},
-            ] if action["id"] not in existing_ids
-        ])
-    elif not recommendation or recommendation.get("status") != "blocked":
-        existing_ids = {action["id"] for action in actions}
-        actions.extend([
-            action for action in [
-                {"id": "show_alternatives", "label": "Show other options", "kind": "follow_up"},
-                {"id": "adjust_preferences", "label": "Adjust group preferences", "kind": "follow_up"},
             ] if action["id"] not in existing_ids
         ])
     result = {"links": links, "actions": actions}

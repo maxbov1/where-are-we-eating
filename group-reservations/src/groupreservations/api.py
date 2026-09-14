@@ -177,6 +177,48 @@ def _conversation_message(role: str, kind: str, content: str, **extra: object) -
     }
 
 
+def _context_actions(
+    recommendation: dict[str, object],
+    exclude_index: int | None = None,
+    focused_index: int | None = None,
+) -> list[dict[str, str]]:
+    """Offer only executable next steps supported by the current evidence."""
+    options = [recommendation.get("primary"), *(recommendation.get("alternatives") or [])]
+    actions: list[dict[str, str]] = []
+    if focused_index is not None and focused_index < len(options) and isinstance(options[focused_index], dict):
+        focused = options[focused_index]
+        reservation = focused.get("reservation") if isinstance(focused.get("reservation"), dict) else {}
+        handoff_url = reservation.get("url") or focused.get("restaurant_url")
+        if handoff_url:
+            actions.append({
+                "id": "focused_restaurant_handoff",
+                "label": reservation.get("label") or f"Open {focused.get('name', 'restaurant')} reservation options",
+                "kind": "handoff",
+                "url": str(handoff_url),
+            })
+    for index, option in enumerate(options):
+        if index == exclude_index or index == focused_index or not isinstance(option, dict):
+            continue
+        availability = option.get("availability") if isinstance(option.get("availability"), dict) else {}
+        if availability.get("status") == "verified":
+            continue
+        action_id = "check_primary_availability" if index == 0 else f"check_alternative_{index}"
+        actions.append({
+            "id": action_id,
+            "label": f"Check {option.get('name', 'this option')} availability",
+            "kind": "follow_up",
+        })
+        if focused_index is not None:
+            break
+    if not actions:
+        actions.append({
+            "id": "adjust_preferences",
+            "label": "Return to group preferences",
+            "kind": "follow_up",
+        })
+    return actions[:3]
+
+
 def _append_conversation(record: dict[str, object], message: dict[str, object]) -> None:
     messages = record.setdefault("conversation", [])
     if isinstance(messages, list):
@@ -286,6 +328,40 @@ def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: Agen
             )
             return
         response = parse_recommendation_answer(answer)
+        if mode == "availability_pass" and response.get("recommendation"):
+            prior_contract = record.get("_last_contract")
+            current_contract = response["recommendation"]
+            action_id = str(record.get("_last_action") or "")
+            focus_index = {
+                "check_primary_availability": 0,
+                "check_alternative_1": 1,
+                "check_alternative_2": 2,
+            }.get(action_id)
+            prior_options = [prior_contract.get("primary"), *(prior_contract.get("alternatives") or [])] if isinstance(prior_contract, dict) else []
+            current_options = [current_contract.get("primary"), *(current_contract.get("alternatives") or [])]
+            if focus_index is not None and focus_index < len(prior_options) and focus_index < len(current_options):
+                prior_focus = prior_options[focus_index] if isinstance(prior_options[focus_index], dict) else {}
+                current_focus = current_options[focus_index] if isinstance(current_options[focus_index], dict) else {}
+                prior_evidence = json.dumps({"availability": prior_focus.get("availability"), "reservation": prior_focus.get("reservation")}, sort_keys=True)
+                current_evidence = json.dumps({"availability": current_focus.get("availability"), "reservation": current_focus.get("reservation")}, sort_keys=True)
+                if prior_evidence == current_evidence:
+                    current_contract["status"] = "blocked"
+                    current_contract["blocker"] = {
+                        "code": "NO_NEW_RESERVATION_EVIDENCE",
+                        "title": "I can't complete further than this",
+                        "explanation": "The availability check did not produce new reservation evidence for the selected restaurant.",
+                        "next_step": "Open the restaurant website directly or check another option.",
+                    }
+                    response["actions"] = _context_actions(current_contract, exclude_index=focus_index, focused_index=focus_index)
+                response["follow_up"] = {
+                    "kind": "availability_update",
+                    "restaurant": current_focus.get("name") or "the selected restaurant",
+                    "restaurant_url": current_focus.get("restaurant_url"),
+                    "availability": current_focus.get("availability") or {"status": "unknown"},
+                    "reservation": current_focus.get("reservation") or {"status": "unknown"},
+                    "blocker": current_contract.get("blocker"),
+                }
+                response["actions"] = _context_actions(current_contract, exclude_index=focus_index, focused_index=focus_index)
         if mode == "candidate_pass" and response.get("recommendation"):
             recommendation = response["recommendation"]
             recommendation["status"] = "partial"
@@ -293,18 +369,9 @@ def _run_recommendation(run_id: str, prompt: str, organizer_id: str, state: Agen
                 if isinstance(option, dict):
                     option.setdefault("availability", {})["status"] = "unknown"
                     option.setdefault("reservation", {})["status"] = "unknown"
-            actions = response.setdefault("actions", [])
-            availability_actions = [
-                {"id": "check_primary_availability", "label": "Check primary availability", "kind": "follow_up"},
-                {"id": "check_alternative_1", "label": "Check another option", "kind": "follow_up"},
-            ]
-            other_actions = [
-                action for action in actions
-                if isinstance(action, dict)
-                and action.get("id") not in {item["id"] for item in availability_actions}
-                and action.get("kind") == "follow_up"
-            ]
-            response["actions"] = (availability_actions + other_actions)[:3]
+            response["actions"] = _context_actions(recommendation)
+        elif response.get("recommendation") and not response.get("actions"):
+            response["actions"] = _context_actions(response["recommendation"])
         record.update({
             "status": "complete",
             "stage": "recommendation_ready",
@@ -841,6 +908,8 @@ before or after it. Use exactly this shape:
   "group_fit": "1-2 concise sentences explaining why the group choices led to the primary",
   "primary": {{
     "name": "restaurant name",
+    "website_url": "exact restaurant website URL from Google Places or null",
+    "google_maps_url": "exact Google Maps source URL or null",
     "rating": 4.6,
     "review_count": 1200,
     "price_level": "$$",
@@ -853,8 +922,8 @@ before or after it. Use exactly this shape:
     "reservation": {{"status":"available" or "unknown" or "unavailable", "url":"exact observed/prepared booking URL or null", "provider":"provider name or null", "label":"Get [restaurant]'s reservation"}}
   }},
   "alternatives": [
-    {{"name":"...", "description":"...", "traits":[], "tradeoff":"...", "availability":{{}}, "restaurant_url":"...", "reservation":{{}}}},
-    {{"name":"...", "description":"...", "traits":[], "tradeoff":"...", "availability":{{}}, "restaurant_url":"...", "reservation":{{}}}}
+    {{"name":"...", "description":"...", "traits":[], "tradeoff":"...", "availability":{{}}, "website_url":"...", "google_maps_url":"...", "reservation":{{}}}},
+    {{"name":"...", "description":"...", "traits":[], "tradeoff":"...", "availability":{{}}, "website_url":"...", "google_maps_url":"...", "reservation":{{}}}}
   ],
   "blocker": {{"code":"...","title":"...","explanation":"...","next_step":"..."}} or null,
   "next_steps": ["one or two safe actions the organizer can take next"],

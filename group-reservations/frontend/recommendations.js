@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 const escapeHtml = (value) => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
 const safeUrl = (value) => { try { const parsed = new URL(value, location.origin); return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href : '#'; } catch { return '#'; } };
 let runId = null;
+let baseRecommendationMarkup = null;
 const runStorageKey = surveyId ? `recommendation-run:${surveyId}` : null;
 let scrollFrame = null;
 
@@ -65,28 +66,59 @@ function conversationHtml(messages) {
 
 function renderConversation(result, includeProgress = true) {
   const messages = conversationHtml(result.conversation || []);
+  const normalizedMessage = String(result.message || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const messageAlreadyVisible = (result.conversation || []).some((message) => String(message.content || '').replace(/\s+/g, ' ').trim().toLowerCase() === normalizedMessage);
   const progress = includeProgress
-    ? `<div class="conversation-status"><p class="status-copy">${escapeHtml(result.message || 'Researching the best options…')}</p><span class="status-line" style="width:${stageProgress[result.stage] || 30}%" aria-hidden="true"></span></div>`
+    ? `<div class="conversation-status">${messageAlreadyVisible ? '' : `<p class="status-copy">${escapeHtml(result.message || 'Researching the best options…')}</p>`}<span class="status-line" style="width:${stageProgress[result.stage] || 30}%" aria-hidden="true"></span></div>`
     : '';
   $('recommendations').innerHTML = `${messages ? `<div class="agent-conversation">${messages}</div>` : ''}${progress}`;
   updateScrollRails();
+}
+
+function renderFollowUp(update) {
+  if (!update) return '';
+  const availability = update.availability || {};
+  const reservation = update.reservation || {};
+  const blocker = update.blocker;
+  const website = update.restaurant_url ? safeUrl(update.restaurant_url) : null;
+  const handoffUrl = reservation.url ? safeUrl(reservation.url) : website;
+  const handoffLabel = reservation.url
+    ? (reservation.label || `Open ${update.restaurant}'s reservation options`)
+    : `Open ${update.restaurant}'s website`;
+  const handoff = handoffUrl ? `<p class="follow-up-handoff"><strong>Fastest next step:</strong> <a href="${escapeHtml(handoffUrl)}" target="_blank" rel="noreferrer">${escapeHtml(handoffLabel)} ↗</a></p>` : '';
+  return `<section class="follow-up-result"><p class="summary-label">Focused availability update</p><h2>${website ? `<a class="recommendation-name" href="${escapeHtml(website)}" target="_blank" rel="noreferrer">${escapeHtml(update.restaurant)} ↗</a>` : escapeHtml(update.restaurant)}</h2><p class="recommendation-availability"><strong>${availability.status === 'verified' ? 'Availability verified' : 'Availability not verified'}:</strong> ${escapeHtml(availability.summary || 'No live availability was confirmed.')}</p>${handoff}${blocker ? `<p class="follow-up-blocker"><strong>${escapeHtml(blocker.title || "I can't complete further than this")}</strong> ${escapeHtml(blocker.explanation || '')} ${escapeHtml(blocker.next_step || '')}</p>` : ''}</section>`;
 }
 
 function renderContract(result) {
   runId = result.run_id || runId;
   if (runStorageKey && runId) localStorage.setItem(runStorageKey, runId);
   const response = result.response || {}, recommendation = response.recommendation;
-  const conversation = conversationHtml(result.conversation || []);
-  if (!recommendation) { $('recommendations').innerHTML = `${conversation ? `<div class="agent-conversation">${conversation}</div>` : ''}<article class="agent-answer"><div class="card-kicker">Recommendation unavailable</div><p>We couldn’t receive a complete structured recommendation. Please try again.</p></article>`; return; }
+  const allConversation = result.conversation || [];
+  const actionIndex = allConversation.findIndex((message) => message.kind === 'action');
+  const initialConversation = conversationHtml(actionIndex >= 0 ? allConversation.slice(0, actionIndex) : allConversation);
+  const continuationConversation = actionIndex >= 0 ? conversationHtml(allConversation.slice(actionIndex)) : '';
+  if (!recommendation) { $('recommendations').innerHTML = `${initialConversation ? `<div class="agent-conversation">${initialConversation}</div>` : ''}<article class="agent-answer"><div class="card-kicker">Recommendation unavailable</div><p>We couldn’t receive a complete structured recommendation. Please try again.</p></article>`; return; }
   const option = (item, primary) => {
-    const restaurantUrl = item.restaurant_url ? safeUrl(item.restaurant_url) : null;
+    const candidateWebsite = item.website_url || item.restaurant_url;
+    let restaurantUrl = null;
+    try {
+      const parsedWebsite = candidateWebsite ? new URL(candidateWebsite) : null;
+      const host = parsedWebsite?.hostname.toLowerCase() || '';
+      if (parsedWebsite && !host.endsWith('google.com') && !host.endsWith('googleusercontent.com')) restaurantUrl = safeUrl(candidateWebsite);
+    } catch { restaurantUrl = null; }
     const preview = restaurantUrl ? `<div class="restaurant-preview"><iframe src="${escapeHtml(restaurantUrl)}" title="${escapeHtml(item.name)} website preview" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe></div>` : '';
     const facts = [item.rating != null ? `★ ${Number(item.rating).toFixed(1)}` : '', item.review_count != null ? `${Number(item.review_count).toLocaleString()} reviews` : '', item.price_level || '', item.address || '', item.hours_summary || ''].filter(Boolean);
     const profile = restaurantUrl ? `<a class="restaurant-profile" href="${escapeHtml(restaurantUrl)}" target="_blank" rel="noreferrer">${preview}<h2>${escapeHtml(item.name)} ↗</h2><p class="recommendation-description">${escapeHtml(item.description || '')}</p>${facts.length ? `<p class="recommendation-facts">${facts.map((fact) => escapeHtml(fact)).join(' · ')}</p>` : ''}${item.traits?.length ? `<p class="recommendation-traits">${item.traits.map((trait) => escapeHtml(trait)).join(' · ')}</p>` : ''}${item.tradeoff ? `<p class="recommendation-tradeoff">${escapeHtml(item.tradeoff)}</p>` : ''}</a>` : `<h2>${escapeHtml(item.name)}</h2><p class="recommendation-description">${escapeHtml(item.description || '')}</p>${facts.length ? `<p class="recommendation-facts">${facts.map((fact) => escapeHtml(fact)).join(' · ')}</p>` : ''}${item.traits?.length ? `<p class="recommendation-traits">${item.traits.map((trait) => escapeHtml(trait)).join(' · ')}</p>` : ''}${item.tradeoff ? `<p class="recommendation-tradeoff">${escapeHtml(item.tradeoff)}</p>` : ''}`;
     return `<article class="recommendation-card ${primary ? 'recommendation-primary' : ''}"><div class="card-kicker">${primary ? 'Best fit for the group' : 'Another option'}</div>${profile}<p class="recommendation-availability"><strong>${item.availability?.status === 'verified' ? 'Availability verified' : 'Availability not verified'}:</strong> ${escapeHtml(item.availability?.summary || 'Unknown')}</p>${item.reservation?.url ? `<a class="recommendation-action" href="${escapeHtml(safeUrl(item.reservation.url))}" target="_blank" rel="noreferrer">${escapeHtml(item.reservation.label || `Get ${item.name}'s reservation`)} ↗</a>` : '<span class="recommendation-unavailable">Reservation path not verified</span>'}</article>`;
   };
   const blocker = recommendation.status === 'blocked' && recommendation.blocker ? `<aside class="recommendation-blocker"><strong>${escapeHtml(recommendation.blocker.title || "I can't complete further than this")}</strong><p>${escapeHtml(recommendation.blocker.explanation || '')}</p><p>${escapeHtml(recommendation.blocker.next_step || "I can't complete further than this.")}</p></aside>` : '';
-  $('recommendations').innerHTML = `${conversation ? `<div class="agent-conversation">${conversation}</div>` : ''}<div class="recommendation-set"><p class="recommendation-fit">${escapeHtml(recommendation.group_fit || '')}</p>${option(recommendation.primary,true)}${(recommendation.alternatives || []).slice(0,2).map((item) => option(item,false)).join('')}${blocker}</div>`;
+  const recommendationMarkup = `<div class="recommendation-set"><section class="recommendation-summary"><p class="summary-label">Why these choices</p><p class="recommendation-fit">${escapeHtml(recommendation.group_fit || '')}</p></section>${option(recommendation.primary,true)}${(recommendation.alternatives || []).slice(0,2).map((item) => option(item,false)).join('')}${blocker}</div>`;
+  if (response.follow_up && baseRecommendationMarkup) {
+    $('recommendations').innerHTML = `${initialConversation ? `<div class="agent-conversation">${initialConversation}</div>` : ''}${baseRecommendationMarkup}${continuationConversation ? `<div class="agent-conversation agent-continuation">${continuationConversation}</div>` : ''}${renderFollowUp(response.follow_up)}`;
+  } else {
+    baseRecommendationMarkup = recommendationMarkup;
+    $('recommendations').innerHTML = `${initialConversation ? `<div class="agent-conversation">${initialConversation}</div>` : ''}${recommendationMarkup}`;
+  }
   updateScrollRails();
   renderActions(response.actions || result.actions || []);
 }
@@ -94,8 +126,19 @@ function renderContract(result) {
 function renderActions(actions) {
   $('booking-handoff').innerHTML = actions.map((action) => action.url ? `<a class="quick-action" href="${escapeHtml(safeUrl(action.url))}" target="_blank" rel="noreferrer">${escapeHtml(action.label)} ↗</a>` : `<button class="quick-action" type="button" data-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('');
   $('booking-handoff').classList.toggle('hidden', !actions.length);
-  $('booking-handoff').querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => continueRun(button, button.dataset.action)));
-  $('booking-handoff').querySelectorAll('[data-action="show_alternatives"]').forEach((button) => button.addEventListener('click', () => document.querySelector('.recommendation-card:not(.recommendation-primary)')?.scrollIntoView({behavior:'smooth',block:'center'})));
+  $('booking-handoff').querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => handleAction(button, button.dataset.action)));
+}
+
+function handleAction(button, actionId) {
+  if (actionId === 'show_alternatives') {
+    document.querySelector('.recommendation-card:not(.recommendation-primary)')?.scrollIntoView({behavior:'smooth',block:'center'});
+    return;
+  }
+  if (actionId === 'adjust_preferences') {
+    location.href = `event-overview.html?survey=${encodeURIComponent(surveyId)}#preferences`;
+    return;
+  }
+  continueRun(button, actionId);
 }
 
 async function continueRun(button, actionId = 'refresh_research') {
