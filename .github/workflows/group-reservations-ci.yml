@@ -47,7 +47,10 @@ jobs:
           node-version: "20"
 
       - name: Validate frontend JavaScript
-        run: node --check frontend/app.js
+        run: |
+          for file in frontend/*.js; do
+            node --check "$file"
+          done
 
       - name: Check patch whitespace
         working-directory: .
