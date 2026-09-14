@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright/python:v1.58.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -11,6 +11,7 @@ COPY src /app/src
 
 RUN pip install --no-cache-dir . \
     && python -m playwright install chromium \
+    && python -m playwright --version \
     && mkdir -p /app/.local \
     && chown -R pwuser:pwuser /app
 
